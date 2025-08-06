@@ -587,9 +587,9 @@ void
 rv64_abi(Fn *fn)
 {
 	Blk *b;
-	Ins *i, *i0, *ip;
+	Ins *i, *i0;
 	Insl *il;
-	int n;
+	int n0, n1, ioff;
 	Params p;
 
 	for (b=fn->start; b; b=b->link)
@@ -600,12 +600,13 @@ rv64_abi(Fn *fn)
 		if (!ispar(i->op))
 			break;
 	p = selpar(fn, b->ins, i);
-	n = b->nins - (i - b->ins) + (&insb[NIns] - curi);
-	i0 = alloc(n * sizeof(Ins));
-	ip = icpy(ip = i0, curi, &insb[NIns] - curi);
-	ip = icpy(ip, i, &b->ins[b->nins] - i);
-	b->nins = n;
-	b->ins = i0;
+	n0 = &insb[NIns] - curi;
+	ioff = i - b->ins;
+	n1 = b->nins - ioff;
+	vgrow(&b->ins, n0+n1);
+	icpy(b->ins+n0, b->ins+ioff, n1);
+	icpy(b->ins, curi, n0);
+	b->nins = n0+n1;
 
 	/* lower calls, returns, and vararg instructions */
 	il = 0;
@@ -642,8 +643,7 @@ rv64_abi(Fn *fn)
 		if (b == fn->start)
 			for (; il; il=il->link)
 				emiti(il->i);
-		b->nins = &insb[NIns] - curi;
-		idup(&b->ins, curi, b->nins);
+		idup(b, curi, &insb[NIns]-curi);
 	} while (b != fn->start);
 
 	if (debug['A']) {

@@ -75,7 +75,17 @@ emitdat(Dat *d, FILE *f)
 		zero = 0;
 		break;
 	case DEnd:
-		if (zero != -1) {
+		if (d->lnk->common) {
+			if (zero == -1)
+				die("invalid common data definition");
+			p = d->name[0] == '"' ? "" : T.assym;
+			fprintf(f, ".comm %s%s,%"PRId64,
+				p, d->name, zero);
+			if (d->lnk->align)
+				fprintf(f, ",%d", d->lnk->align);
+			fputc('\n', f);
+		}
+		else if (zero != -1) {
 			emitlnk(d->name, d->lnk, SecBss, f);
 			fprintf(f, "\t.fill %"PRId64",1,0\n", zero);
 		}
@@ -115,7 +125,7 @@ emitdat(Dat *d, FILE *f)
 typedef struct Asmbits Asmbits;
 
 struct Asmbits {
-	char bits[16];
+	bits n;
 	int size;
 	Asmbits *link;
 };
@@ -123,18 +133,17 @@ struct Asmbits {
 static Asmbits *stash;
 
 int
-stashbits(void *bits, int size)
+stashbits(bits n, int size)
 {
 	Asmbits **pb, *b;
 	int i;
 
 	assert(size == 4 || size == 8 || size == 16);
 	for (pb=&stash, i=0; (b=*pb); pb=&b->link, i++)
-		if (size <= b->size)
-		if (memcmp(bits, b->bits, size) == 0)
+		if (size <= b->size && b->n == n)
 			return i;
 	b = emalloc(sizeof *b);
-	memcpy(b->bits, bits, size);
+	b->n = n;
 	b->size = size;
 	b->link = 0;
 	*pb = b;
@@ -145,9 +154,8 @@ static void
 emitfin(FILE *f, char *sec[3])
 {
 	Asmbits *b;
-	char *p;
 	int lg, i;
-	double d;
+	union { int32_t i; float f; } u;
 
 	if (!stash)
 		return;
@@ -161,17 +169,24 @@ emitfin(FILE *f, char *sec[3])
 					"%sfp%d:",
 					sec[lg-2], lg, T.asloc, i
 				);
-				for (p=b->bits; p<&b->bits[b->size]; p+=4)
-					fprintf(f, "\n\t.int %"PRId32,
-						*(int32_t *)p);
-				if (lg <= 3) {
-					if (lg == 2)
-						d = *(float *)b->bits;
-					else
-						d = *(double *)b->bits;
-					fprintf(f, " /* %f */\n\n", d);
-				} else
-					fprintf(f, "\n\n");
+				if (lg == 4)
+					fprintf(f,
+						"\n\t.quad %"PRId64
+						"\n\t.quad 0\n\n",
+						(int64_t)b->n);
+				else if (lg == 3)
+					fprintf(f,
+						"\n\t.quad %"PRId64
+						" /* %f */\n\n",
+						(int64_t)b->n,
+						*(double *)&b->n);
+				else if (lg == 2) {
+					u.i = b->n;
+					fprintf(f,
+						"\n\t.int %"PRId32
+						" /* %f */\n\n",
+						u.i, (double)u.f);
+				}
 			}
 		}
 	while ((b=stash)) {

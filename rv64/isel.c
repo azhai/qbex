@@ -41,7 +41,7 @@ fixarg(Ref *r, int k, Ins *i, Fn *fn)
 			 * immediates
 			 */
 			assert(c->type == CBits);
-			n = stashbits(&c->bits, KWIDE(k) ? 8 : 4);
+			n = stashbits(c->bits.i, KWIDE(k) ? 8 : 4);
 			vgrow(&fn->con, ++fn->ncon);
 			c = &fn->con[fn->ncon-1];
 			sprintf(buf, "\"%sfp%d\"", T.asloc, n);
@@ -244,8 +244,7 @@ rv64_isel(Fn *fn)
 		seljmp(b, fn);
 		for (i=&b->ins[b->nins]; i!=b->ins;)
 			sel(*--i, fn);
-		b->nins = &insb[NIns] - curi;
-		idup(&b->ins, curi, b->nins);
+		idup(b, curi, &insb[NIns]-curi);
 	}
 
 	if (debug['I']) {

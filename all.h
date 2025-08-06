@@ -21,6 +21,7 @@ typedef struct Phi Phi;
 typedef struct Blk Blk;
 typedef struct Use Use;
 typedef struct Sym Sym;
+typedef struct Num Num;
 typedef struct Alias Alias;
 typedef struct Tmp Tmp;
 typedef struct Con Con;
@@ -115,7 +116,7 @@ static inline int rtype(Ref r)
 
 static inline int rsval(Ref r)
 {
-	return (int32_t)((int64_t)r.val << 3) >> 3;
+	return ((int)r.val ^ 0x10000000) - 0x10000000;
 }
 
 enum CmpI {
@@ -190,6 +191,7 @@ enum {
 #define INRANGE(x, l, u) ((unsigned)(x) - l <= u - l) /* linear in x */
 #define isstore(o) INRANGE(o, Ostoreb, Ostored)
 #define isload(o) INRANGE(o, Oloadsb, Oload)
+#define isalloc(o) INRANGE(o, Oalloc4, Oalloc16)
 #define isext(o) INRANGE(o, Oextsb, Oextuw)
 #define ispar(o) INRANGE(o, Opar, Opare)
 #define isarg(o) INRANGE(o, Oarg, Oargv)
@@ -212,7 +214,16 @@ enum {
 struct Op {
 	char *name;
 	short argcls[2][4];
-	int canfold;
+	uint canfold:1;
+	uint hasid:1;     /* op identity value? */
+	uint idval:1;     /* identity value 0/1 */
+	uint commutes:1;  /* commutative op? */
+	uint assoc:1;     /* associative op? */
+	uint idemp:1;     /* idempotent op? */
+	uint cmpeqwl:1;   /* Kl/Kw cmp eq/ne? */
+	uint cmplgtewl:1; /* Kl/Kw cmp lt/gt/le/ge? */
+	uint eqval:1;     /* 1 for eq; 0 for ne */
+	uint pinned:1;    /* GCM pinned op? */
 };
 
 struct Ins {
@@ -227,7 +238,8 @@ struct Phi {
 	Ref *arg;
 	Blk **blk;
 	uint narg;
-	int cls;
+	short cls;
+	uint visit:1;
 	Phi *link;
 };
 
@@ -250,6 +262,7 @@ struct Blk {
 	Blk *dom, *dlink;
 	Blk **fron;
 	uint nfron;
+	int depth;
 
 	Blk **pred;
 	uint npred;
@@ -279,6 +292,12 @@ struct Sym {
 		SThr,
 	} type;
 	uint32_t id;
+};
+
+struct Num {
+	uchar n;
+	uchar nl, nr;
+	Ref l, r;
 };
 
 enum {
@@ -335,6 +354,7 @@ struct Tmp {
 		Wuw
 	} width;
 	int visit;
+	uint gcmbid;
 };
 
 struct Con {
@@ -364,6 +384,7 @@ struct Addr { /* amd64 addressing */
 struct Lnk {
 	char export;
 	char thread;
+	char common;
 	char align;
 	char *sec;
 	char *secf;
@@ -383,8 +404,10 @@ struct Fn {
 	Blk **rpo;
 	bits reg;
 	int slot;
+	int salign;
 	char vararg;
 	char dynalloc;
+	char leaf;
 	char name[NString];
 	Lnk lnk;
 };
@@ -458,29 +481,36 @@ void freeall(void);
 void *vnew(ulong, size_t, Pool);
 void vfree(void *);
 void vgrow(void *, ulong);
+void addins(Ins **, uint *, Ins *);
+void addbins(Blk *, Ins **, uint *);
 void strf(char[NString], char *, ...);
 uint32_t intern(char *);
 char *str(uint32_t);
 int argcls(Ins *, int);
 int isreg(Ref);
 int iscmp(int, int *, int *);
+void igroup(Blk *, Ins *, Ins **, Ins **);
 void emit(int, int, Ref, Ref, Ref);
 void emiti(Ins);
-void idup(Ins **, Ins *, ulong);
+void idup(Blk *, Ins *, ulong);
 Ins *icpy(Ins *, Ins *, ulong);
 int cmpop(int);
 int cmpneg(int);
+int cmpwlneg(int);
 int clsmerge(short *, short);
 int phicls(int, Tmp *);
+uint phiargn(Phi *, Blk *);
+Ref phiarg(Phi *, Blk *);
 Ref newtmp(char *, int, Fn *);
 void chuse(Ref, int, Fn *);
 int symeq(Sym, Sym);
 Ref newcon(Con *, Fn *);
 Ref getcon(int64_t, Fn *);
-int addcon(Con *, Con *);
+int addcon(Con *, Con *, int);
+int isconbits(Fn *fn, Ref r, int64_t *v);
 void salloc(Ref, Ref, Fn *);
 void dumpts(BSet *, Tmp *, FILE *);
-
+void runmatch(uchar *, Num *, Ref, Ref *);
 void bsinit(BSet *, uint);
 void bszero(BSet *);
 uint bscount(BSet *);
@@ -512,16 +542,19 @@ void elimsb(Fn *);
 
 /* cfg.c */
 Blk *newblk(void);
-void edgedel(Blk *, Blk **);
 void fillpreds(Fn *);
-void fillrpo(Fn *);
+void fillcfg(Fn *);
 void filldom(Fn *);
 int sdom(Blk *, Blk *);
 int dom(Blk *, Blk *);
 void fillfron(Fn *);
 void loopiter(Fn *, void (*)(Blk *, Blk *));
+void filldepth(Fn *);
+Blk *lca(Blk *, Blk *);
 void fillloop(Fn *);
 void simpljmp(Fn *);
+int reaches(Fn *, Blk *, Blk *);
+int reachesnotvia(Fn *, Blk *, Blk *, Blk *);
 
 /* mem.c */
 void promote(Fn *);
@@ -539,17 +572,28 @@ int storesz(Ins *);
 void loadopt(Fn *);
 
 /* ssa.c */
+void adduse(Tmp *, int, Blk *, ...);
 void filluse(Fn *);
-void fillpreds(Fn *);
-void fillrpo(Fn *);
 void ssa(Fn *);
 void ssacheck(Fn *);
 
 /* copy.c */
-void copy(Fn *);
+void narrowpars(Fn *fn);
+Ref copyref(Fn *, Blk *, Ins *);
+Ref phicopyref(Fn *, Blk *, Phi *);
 
 /* fold.c */
-void fold(Fn *);
+int foldint(Con *, int, int, Con *, Con *);
+Ref foldref(Fn *, Ins *);
+
+/* gvn.c */
+extern Ref con01[2];  /* 0 and 1 */
+int zeroval(Fn *, Blk *, Ref, int, int *);
+void gvn(Fn *);
+
+/* gcm.c */
+int pinned(Ins *);
+void gcm(Fn *);
 
 /* simpl.c */
 void simpl(Fn *);
@@ -570,7 +614,7 @@ void emitfnlnk(char *, Lnk *, FILE *);
 void emitdat(Dat *, FILE *);
 void emitdbgfile(char *, FILE *);
 void emitdbgloc(uint, uint, FILE *);
-int stashbits(void *, int);
+int stashbits(bits, int);
 void elf_emitfnfin(char *, FILE *);
 void elf_emitfin(FILE *);
 void macho_emitfin(FILE *);

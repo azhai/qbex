@@ -59,8 +59,7 @@ func(Fn *fn)
 		printfn(fn, stderr);
 	}
 	T.abi0(fn);
-	fillrpo(fn);
-	fillpreds(fn);
+	fillcfg(fn);
 	filluse(fn);
 	promote(fn);
 	filluse(fn);
@@ -73,25 +72,29 @@ func(Fn *fn)
 	fillalias(fn);
 	coalesce(fn);
 	filluse(fn);
+	filldom(fn);
 	ssacheck(fn);
-	copy(fn);
+	gvn(fn);
+	fillcfg(fn);
 	filluse(fn);
-	fold(fn);
+	filldom(fn);
+	gcm(fn);
+	filluse(fn);
+	ssacheck(fn);
 	T.abi1(fn);
 	simpl(fn);
-	fillpreds(fn);
+	fillcfg(fn);
 	filluse(fn);
 	T.isel(fn);
-	fillrpo(fn);
+	fillcfg(fn);
 	filllive(fn);
 	fillloop(fn);
 	fillcost(fn);
 	spill(fn);
 	rega(fn);
-	fillrpo(fn);
+	fillcfg(fn);
 	simpljmp(fn);
-	fillpreds(fn);
-	fillrpo(fn);
+	fillcfg(fn);
 	assert(fn->rpo[0] == fn->start);
 	for (n=0;; n++)
 		if (n == fn->nblk-1) {
