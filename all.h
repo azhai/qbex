@@ -20,6 +20,7 @@ typedef struct Ins Ins;
 typedef struct Phi Phi;
 typedef struct Blk Blk;
 typedef struct Use Use;
+typedef struct Sym Sym;
 typedef struct Alias Alias;
 typedef struct Tmp Tmp;
 typedef struct Con Con;
@@ -41,6 +42,7 @@ enum {
 
 struct Target {
 	char name[16];
+	char apple;
 	int gpr0;   /* first general purpose reg */
 	int ngpr;
 	int fpr0;   /* first floating point reg */
@@ -52,9 +54,13 @@ struct Target {
 	bits (*retregs)(Ref, int[2]);
 	bits (*argregs)(Ref, int[2]);
 	int (*memargs)(int);
-	void (*abi)(Fn *);
+	void (*abi0)(Fn *);
+	void (*abi1)(Fn *);
 	void (*isel)(Fn *);
 	void (*emitfn)(Fn *, FILE *);
+	void (*emitfin)(FILE *);
+	char asloc[4];
+	char assym[4];
 };
 
 #define BIT(n) ((bits)1 << (n))
@@ -77,20 +83,23 @@ struct Ref {
 enum {
 	RTmp,
 	RCon,
-	RType,
+	RInt,
+	RType, /* last kind to come out of the parser */
 	RSlot,
 	RCall,
 	RMem,
 };
 
-#define R        (Ref){0, 0}
+#define R        (Ref){RTmp, 0}
+#define UNDEF    (Ref){RCon, 0}  /* represents uninitialized data */
+#define CON_Z    (Ref){RCon, 1}
 #define TMP(x)   (Ref){RTmp, x}
 #define CON(x)   (Ref){RCon, x}
-#define CON_Z    CON(0)          /* reserved zero constant */
 #define SLOT(x)  (Ref){RSlot, (x)&0x1fffffff}
 #define TYPE(x)  (Ref){RType, x}
 #define CALL(x)  (Ref){RCall, x}
 #define MEM(x)   (Ref){RMem, x}
+#define INT(x)   (Ref){RInt, (x)&0x1fffffff}
 
 static inline int req(Ref a, Ref b)
 {
@@ -102,6 +111,11 @@ static inline int rtype(Ref r)
 	if (req(r, R))
 		return -1;
 	return r.type;
+}
+
+static inline int rsval(Ref r)
+{
+	return ((int32_t)r.val << 3) >> 3;
 }
 
 enum CmpI {
@@ -141,13 +155,14 @@ enum O {
 enum J {
 	Jxxx,
 #define JMPS(X)                                 \
-	X(ret0)   X(retw)   X(retl)   X(rets)   \
-	X(retd)   X(retc)   X(jmp)    X(jnz)    \
+	X(retw)   X(retl)   X(rets)   X(retd)   \
+	X(retsb)  X(retub)  X(retsh)  X(retuh)  \
+	X(retc)   X(ret0)   X(jmp)    X(jnz)    \
 	X(jfieq)  X(jfine)  X(jfisge) X(jfisgt) \
 	X(jfisle) X(jfislt) X(jfiuge) X(jfiugt) \
 	X(jfiule) X(jfiult) X(jffeq)  X(jffge)  \
 	X(jffgt)  X(jffle)  X(jfflt)  X(jffne)  \
-	X(jffo)   X(jffuo)
+	X(jffo)   X(jffuo)  X(hlt)
 #define X(j) J##j,
 	JMPS(X)
 #undef X
@@ -178,7 +193,10 @@ enum {
 #define isext(o) INRANGE(o, Oextsb, Oextuw)
 #define ispar(o) INRANGE(o, Opar, Opare)
 #define isarg(o) INRANGE(o, Oarg, Oargv)
-#define isret(j) INRANGE(j, Jret0, Jretc)
+#define isret(j) INRANGE(j, Jretw, Jret0)
+#define isparbh(o) INRANGE(o, Oparsb, Oparuh)
+#define isargbh(o) INRANGE(o, Oargsb, Oarguh)
+#define isretbh(j) INRANGE(j, Jretsb, Jretuh)
 
 enum {
 	Kx = -1, /* "top" class (see usecheck() and clsmerge()) */
@@ -255,6 +273,14 @@ struct Use {
 	} u;
 };
 
+struct Sym {
+	enum {
+		SGlo,
+		SThr,
+	} type;
+	uint32_t id;
+};
+
 enum {
 	NoAlias,
 	MayAlias,
@@ -271,14 +297,21 @@ struct Alias {
 		AUnk = 6,
 	#define astack(t) ((t) & 1)
 	} type;
-	Ref base;
-	uint32_t label;
+	int base;
 	int64_t offset;
+	union {
+		Sym sym;
+		struct {
+			int sz; /* -1 if > NBit */
+			bits m;
+		} loc;
+	} u;
 	Alias *slot;
 };
 
 struct Tmp {
 	char name[NString];
+	Ins *def;
 	Use *use;
 	uint ndef, nuse;
 	uint bid; /* id of a defining block */
@@ -310,14 +343,13 @@ struct Con {
 		CBits,
 		CAddr,
 	} type;
-	uint32_t label;
+	Sym sym;
 	union {
 		int64_t i;
 		double d;
 		float s;
 	} bits;
 	char flt; /* 1 to print as s, 2 to print as d */
-	char local;
 };
 
 typedef struct Addr Addr;
@@ -331,6 +363,7 @@ struct Addr { /* amd64 addressing */
 
 struct Lnk {
 	char export;
+	char thread;
 	char align;
 	char *sec;
 	char *secf;
@@ -411,8 +444,8 @@ extern char debug['Z'+1];
 
 /* util.c */
 typedef enum {
-	Pheap, /* free() necessary */
-	Pfn, /* discarded after processing the function */
+	PHeap, /* free() necessary */
+	PFn, /* discarded after processing the function */
 } Pool;
 
 extern Typ *typ;
@@ -440,11 +473,10 @@ int clsmerge(short *, short);
 int phicls(int, Tmp *);
 Ref newtmp(char *, int, Fn *);
 void chuse(Ref, int, Fn *);
+int symeq(Sym, Sym);
 Ref newcon(Con *, Fn *);
 Ref getcon(int64_t, Fn *);
 int addcon(Con *, Con *);
-void blit(Ref, uint, Ref, uint, uint, Fn *);
-void blit0(Ref, Ref, uint, Fn *);
 void salloc(Ref, Ref, Fn *);
 void dumpts(BSet *, Tmp *, FILE *);
 
@@ -474,6 +506,9 @@ void printfn(Fn *, FILE *);
 void printref(Ref, Fn *, FILE *);
 void err(char *, ...) __attribute__((noreturn));
 
+/* abi.c */
+void elimsb(Fn *);
+
 /* cfg.c */
 Blk *blknew(void);
 void edgedel(Blk *, Blk **);
@@ -488,11 +523,13 @@ void fillloop(Fn *);
 void simpljmp(Fn *);
 
 /* mem.c */
-void memopt(Fn *);
+void promote(Fn *);
+void coalesce(Fn *);
 
 /* alias.c */
 void fillalias(Fn *);
-int alias(Ref, int, Ref, int, int *, Fn *);
+void getalias(Alias *, Ref, Fn *);
+int alias(Ref, int, int, Ref, int, int *, Fn *);
 int escapes(Ref, Fn *);
 
 /* load.c */
@@ -513,6 +550,9 @@ void copy(Fn *);
 /* fold.c */
 void fold(Fn *);
 
+/* simpl.c */
+void simpl(Fn *);
+
 /* live.c */
 void liveon(BSet *, Blk *, Blk *);
 void filllive(Fn *);
@@ -524,16 +564,10 @@ void spill(Fn *);
 /* rega.c */
 void rega(Fn *);
 
-/* gas.c */
-enum Asm {
-	Gasmacho,
-	Gaself,
-};
-extern char *gasloc;
-extern char *gassym;
-void gasinit(enum Asm);
-void gasemitlnk(char *, Lnk *, char *, FILE *);
-void gasemitfntail(char *, FILE *);
-void gasemitdat(Dat *, FILE *);
-int gasstash(void *, int);
-void gasemitfin(FILE *);
+/* emit.c */
+void emitfnlnk(char *, Lnk *, FILE *);
+void emitdat(Dat *, FILE *);
+int stashbits(void *, int);
+void elf_emitfnfin(char *, FILE *);
+void elf_emitfin(FILE *);
+void macho_emitfin(FILE *);

@@ -116,9 +116,11 @@ static char *rname[] = {
 };
 
 static int64_t
-slot(int s, Fn *fn)
+slot(Ref r, Fn *fn)
 {
-	s = ((int32_t)s << 3) >> 3;
+	int s;
+
+	s = rsval(r);
 	assert(s <= fn->slot);
 	if (s < 0)
 		return 8 * -s;
@@ -129,14 +131,10 @@ slot(int s, Fn *fn)
 static void
 emitaddr(Con *c, FILE *f)
 {
-	char off[32], *p;
-
+	assert(c->sym.type == SGlo);
+	fputs(str(c->sym.id), f);
 	if (c->bits.i)
-		sprintf(off, "+%"PRIi64, c->bits.i);
-	else
-		off[0] = 0;
-	p = c->local ? ".L" : "";
-	fprintf(f, "%s%s%s", p, str(c->label), off);
+		fprintf(f, "+%"PRIi64, c->bits.i);
 }
 
 static void
@@ -218,7 +216,7 @@ emitf(char *s, Ins *i, Fn *fn, FILE *f)
 				}
 				break;
 			case RSlot:
-				offset = slot(r.val, fn);
+				offset = slot(r, fn);
 				assert(offset >= -2048 && offset <= 2047);
 				fprintf(f, "%d(fp)", (int)offset);
 				break;
@@ -229,25 +227,44 @@ emitf(char *s, Ins *i, Fn *fn, FILE *f)
 }
 
 static void
+loadaddr(Con *c, char *rn, FILE *f)
+{
+	char off[32];
+
+	if (c->sym.type == SThr) {
+		if (c->bits.i)
+			sprintf(off, "+%"PRIi64, c->bits.i);
+		else
+			off[0] = 0;
+		fprintf(f, "\tlui %s, %%tprel_hi(%s)%s\n",
+			rn, str(c->sym.id), off);
+		fprintf(f, "\tadd %s, %s, tp, %%tprel_add(%s)%s\n",
+			rn, rn, str(c->sym.id), off);
+		fprintf(f, "\taddi %s, %s, %%tprel_lo(%s)%s\n",
+			rn, rn, str(c->sym.id), off);
+	} else {
+		fprintf(f, "\tla %s, ", rn);
+		emitaddr(c, f);
+		fputc('\n', f);
+	}
+}
+
+static void
 loadcon(Con *c, int r, int k, FILE *f)
 {
 	char *rn;
 	int64_t n;
-	int w;
 
-	w = KWIDE(k);
 	rn = rname[r];
 	switch (c->type) {
 	case CAddr:
-		fprintf(f, "\tla %s, ", rn);
-		emitaddr(c, f);
-		fputc('\n', f);
+		loadaddr(c, rn, f);
 		break;
 	case CBits:
 		n = c->bits.i;
-		if (!w)
+		if (!KWIDE(k))
 			n = (int32_t)n;
-		fprintf(f, "\tli %s, %"PRIu64"\n", rn, n);
+		fprintf(f, "\tli %s, %"PRIi64"\n", rn, n);
 		break;
 	default:
 		die("invalid constant");
@@ -255,14 +272,23 @@ loadcon(Con *c, int r, int k, FILE *f)
 }
 
 static void
-fixslot(Ref *pr, Fn *fn, FILE *f)
+fixmem(Ref *pr, Fn *fn, FILE *f)
 {
 	Ref r;
 	int64_t s;
+	Con *c;
 
 	r = *pr;
+	if (rtype(r) == RCon) {
+		c = &fn->con[r.val];
+		if (c->type == CAddr)
+		if (c->sym.type == SThr) {
+			loadcon(c, T6, Kl, f);
+			*pr = TMP(T6);
+		}
+	}
 	if (rtype(r) == RSlot) {
-		s = slot(r.val, fn);
+		s = slot(r, fn);
 		if (s < -2048 || s > 2047) {
 			fprintf(f, "\tli t6, %"PRId64"\n", s);
 			fprintf(f, "\tadd t6, fp, t6\n");
@@ -282,9 +308,9 @@ emitins(Ins *i, Fn *fn, FILE *f)
 	switch (i->op) {
 	default:
 		if (isload(i->op))
-			fixslot(&i->arg[0], fn, f);
+			fixmem(&i->arg[0], fn, f);
 		else if (isstore(i->op))
-			fixslot(&i->arg[1], fn, f);
+			fixmem(&i->arg[1], fn, f);
 	Table:
 		/* most instructions are just pulled out of
 		 * the table omap[], some special cases are
@@ -321,7 +347,7 @@ emitins(Ins *i, Fn *fn, FILE *f)
 				case Ks: i->op = Ostores; break;
 				case Kd: i->op = Ostored; break;
 				}
-				fixslot(&i->arg[1], fn, f);
+				fixmem(&i->arg[1], fn, f);
 				goto Table;
 			}
 			break;
@@ -333,7 +359,7 @@ emitins(Ins *i, Fn *fn, FILE *f)
 			break;
 		case RSlot:
 			i->op = Oload;
-			fixslot(&i->arg[0], fn, f);
+			fixmem(&i->arg[0], fn, f);
 			goto Table;
 		default:
 			assert(isreg(i->arg[0]));
@@ -345,7 +371,7 @@ emitins(Ins *i, Fn *fn, FILE *f)
 	case Oaddr:
 		assert(rtype(i->arg[0]) == RSlot);
 		rn = rname[i->to.val];
-		s = slot(i->arg[0].val, fn);
+		s = slot(i->arg[0], fn);
 		if (-s < 2048) {
 			fprintf(f, "\tadd %s, fp, %"PRId64"\n", rn, s);
 		} else {
@@ -360,15 +386,17 @@ emitins(Ins *i, Fn *fn, FILE *f)
 		switch (rtype(i->arg[0])) {
 		case RCon:
 			con = &fn->con[i->arg[0].val];
-			if (con->type != CAddr || con->bits.i)
-				goto invalid;
-			fprintf(f, "\tcall %s\n", str(con->label));
+			if (con->type != CAddr
+			|| con->sym.type != SGlo
+			|| con->bits.i)
+				goto Invalid;
+			fprintf(f, "\tcall %s\n", str(con->sym.id));
 			break;
 		case RTmp:
 			emitf("jalr %0", i, fn, f);
 			break;
 		default:
-		invalid:
+		Invalid:
 			die("invalid call argument");
 		}
 		break;
@@ -415,7 +443,7 @@ rv64_emitfn(Fn *fn, FILE *f)
 	Blk *b, *s;
 	Ins *i;
 
-	gasemitlnk(fn->name, &fn->lnk, ".text", f);
+	emitfnlnk(fn->name, &fn->lnk, f);
 
 	if (fn->vararg) {
 		/* TODO: only need space for registers
@@ -468,6 +496,9 @@ rv64_emitfn(Fn *fn, FILE *f)
 			emitins(i, fn, f);
 		lbl = 1;
 		switch (b->jmp.type) {
+		case Jhlt:
+			fprintf(f, "\tebreak\n");
+			break;
 		case Jret0:
 			if (fn->dynalloc) {
 				if (frame - 16 <= 2048)

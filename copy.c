@@ -125,7 +125,7 @@ subst(Ref *pr, Ref *cpy)
 	*pr = copyof(*pr, cpy);
 }
 
-/* requires use and rpo, breaks use */
+/* requires use and dom, breaks use */
 void
 copy(Fn *fn)
 {
@@ -134,14 +134,14 @@ copy(Fn *fn)
 	Phi *p, **pp;
 	Ins *i;
 	Blk *b;
-	uint n, a;
-	Ref *cpy, r;
+	uint n, a, eq;
+	Ref *cpy, r, r1;
 	int t;
 
 	bsinit(ts, fn->ntmp);
 	bsinit(as, fn->ntmp);
 	cpy = emalloc(fn->ntmp * sizeof cpy[0]);
-	stk = vnew(10, sizeof stk[0], Pheap);
+	stk = vnew(10, sizeof stk[0], PHeap);
 
 	/* 1. build the copy-of map */
 	for (n=0; n<fn->nblk; n++) {
@@ -150,13 +150,26 @@ copy(Fn *fn)
 			assert(rtype(p->to) == RTmp);
 			if (!req(cpy[p->to.val], R))
 				continue;
+			eq = 0;
 			r = R;
 			for (a=0; a<p->narg; a++)
-				if (p->blk[a]->id < n)
-					r = copyof(p->arg[a], cpy);
+				if (p->blk[a]->id < n) {
+					r1 = copyof(p->arg[a], cpy);
+					if (req(r, R) || req(r, UNDEF))
+						r = r1;
+					if (req(r1, r) || req(r1, UNDEF))
+						eq++;
+				}
 			assert(!req(r, R));
-			cpy[p->to.val] = p->to;
-			phisimpl(p, r, cpy, &stk, ts, as, fn);
+			if (rtype(r) == RTmp
+			&& !dom(fn->rpo[fn->tmp[r.val].bid], b))
+				cpy[p->to.val] = p->to;
+			else if (eq == p->narg)
+				cpy[p->to.val] = r;
+			else {
+				cpy[p->to.val] = p->to;
+				phisimpl(p, r, cpy, &stk, ts, as, fn);
+			}
 		}
 		for (i=b->ins; i<&b->ins[b->nins]; i++) {
 			assert(rtype(i->to) <= RTmp);

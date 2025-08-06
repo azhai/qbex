@@ -41,12 +41,12 @@ fixarg(Ref *r, int k, Ins *i, Fn *fn)
 			 * immediates
 			 */
 			assert(c->type == CBits);
-			n = gasstash(&c->bits, KWIDE(k) ? 8 : 4);
+			n = stashbits(&c->bits, KWIDE(k) ? 8 : 4);
 			vgrow(&fn->con, ++fn->ncon);
 			c = &fn->con[fn->ncon-1];
-			sprintf(buf, "fp%d", n);
-			*c = (Con){.type = CAddr, .local = 1};
-			c->label = intern(buf);
+			sprintf(buf, "\"%sfp%d\"", T.asloc, n);
+			*c = (Con){.type = CAddr};
+			c->sym.id = intern(buf);
 			emit(Oload, k, r1, CON(c-fn->con), R);
 			break;
 		}

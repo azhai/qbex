@@ -70,26 +70,51 @@ static void
 fixarg(Ref *pr, int k, int phi, Fn *fn)
 {
 	char buf[32];
-	Ref r0, r1, r2;
+	Con *c, cc;
+	Ref r0, r1, r2, r3;
 	int s, n;
-	Con *c;
 
 	r0 = *pr;
 	switch (rtype(r0)) {
 	case RCon:
+		c = &fn->con[r0.val];
+		if (T.apple
+		&& c->type == CAddr
+		&& c->sym.type == SThr) {
+			r1 = newtmp("isel", Kl, fn);
+			*pr = r1;
+			if (c->bits.i) {
+				r2 = newtmp("isel", Kl, fn);
+				cc = (Con){.type = CBits};
+				cc.bits.i = c->bits.i;
+				r3 = newcon(&cc, fn);
+				emit(Oadd, Kl, r1, r2, r3);
+				r1 = r2;
+			}
+			emit(Ocopy, Kl, r1, TMP(R0), R);
+			r1 = newtmp("isel", Kl, fn);
+			r2 = newtmp("isel", Kl, fn);
+			emit(Ocall, 0, R, r1, CALL(33));
+			emit(Ocopy, Kl, TMP(R0), r2, R);
+			emit(Oload, Kl, r1, r2, R);
+			cc = *c;
+			cc.bits.i = 0;
+			r3 = newcon(&cc, fn);
+			emit(Ocopy, Kl, r2, r3, R);
+			break;
+		}
 		if (KBASE(k) == 0 && phi)
 			return;
 		r1 = newtmp("isel", k, fn);
 		if (KBASE(k) == 0) {
 			emit(Ocopy, k, r1, r0, R);
 		} else {
-			c = &fn->con[r0.val];
-			n = gasstash(&c->bits, KWIDE(k) ? 8 : 4);
+			n = stashbits(&c->bits, KWIDE(k) ? 8 : 4);
 			vgrow(&fn->con, ++fn->ncon);
 			c = &fn->con[fn->ncon-1];
-			sprintf(buf, "fp%d", n);
-			*c = (Con){.type = CAddr, .local = 1};
-			c->label = intern(buf);
+			sprintf(buf, "\"%sfp%d\"", T.asloc, n);
+			*c = (Con){.type = CAddr};
+			c->sym.id = intern(buf);
 			r2 = newtmp("isel", Kl, fn);
 			emit(Oload, k, r1, r2, R);
 			emit(Ocopy, Kl, r2, CON(c-fn->con), R);
@@ -156,6 +181,22 @@ selcmp(Ref arg[2], int k, Fn *fn)
 	return swap;
 }
 
+static int
+callable(Ref r, Fn *fn)
+{
+	Con *c;
+
+	if (rtype(r) == RTmp)
+		return 1;
+	if (rtype(r) == RCon) {
+		c = &fn->con[r.val];
+		if (c->type == CAddr)
+		if (c->bits.i == 0)
+			return 1;
+	}
+	return 0;
+}
+
 static void
 sel(Ins i, Fn *fn)
 {
@@ -178,6 +219,11 @@ sel(Ins i, Fn *fn)
 			i0->op += cc;
 		return;
 	}
+	if (i.op == Ocall)
+	if (callable(i.arg[0], fn)) {
+		emiti(i);
+		return;
+	}
 	if (i.op != Onop) {
 		emiti(i);
 		iarg = curi->arg; /* fixarg() can change curi */
@@ -193,16 +239,11 @@ seljmp(Blk *b, Fn *fn)
 	Ins *i, *ir;
 	int ck, cc, use;
 
-	switch (b->jmp.type) {
-	default:
-		assert(0 && "TODO 2");
-		break;
-	case Jret0:
-	case Jjmp:
+	if (b->jmp.type == Jret0
+	|| b->jmp.type == Jjmp
+	|| b->jmp.type == Jhlt)
 		return;
-	case Jjnz:
-		break;
-	}
+	assert(b->jmp.type == Jjnz);
 	r = b->jmp.arg;
 	use = -1;
 	b->jmp.arg = R;

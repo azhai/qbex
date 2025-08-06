@@ -47,6 +47,7 @@ filluse(Fn *fn)
 	/* todo, is this the correct file? */
 	tmp = fn->tmp;
 	for (t=Tmp0; t<fn->ntmp; t++) {
+		tmp[t].def = 0;
 		tmp[t].bid = -1u;
 		tmp[t].ndef = 0;
 		tmp[t].nuse = 0;
@@ -54,7 +55,7 @@ filluse(Fn *fn)
 		tmp[t].phi = 0;
 		tmp[t].width = WFull;
 		if (tmp[t].use == 0)
-			tmp[t].use = vnew(0, sizeof(Use), Pfn);
+			tmp[t].use = vnew(0, sizeof(Use), PFn);
 	}
 	for (b=fn->start; b; b=b->link) {
 		for (p=b->phi; p; p=p->link) {
@@ -77,6 +78,8 @@ filluse(Fn *fn)
 			if (!req(i->to, R)) {
 				assert(rtype(i->to) == RTmp);
 				w = WFull;
+				if (isparbh(i->op))
+					w = Wsb + (i->op - Oparsb);
 				if (isload(i->op) && i->op != Oload)
 					w = Wsb + (i->op - Oloadsb);
 				if (isext(i->op))
@@ -86,6 +89,7 @@ filluse(Fn *fn)
 					w = WFull;
 				t = i->to.val;
 				tmp[t].width = w;
+				tmp[t].def = i;
 				tmp[t].bid = b->id;
 				tmp[t].ndef++;
 				tmp[t].cls = i->cls;
@@ -181,8 +185,8 @@ phiins(Fn *fn)
 					p->cls = k;
 					p->to = TMP(t);
 					p->link = a->phi;
-					p->arg = vnew(0, sizeof p->arg[0], Pfn);
-					p->blk = vnew(0, sizeof p->blk[0], Pfn);
+					p->arg = vnew(0, sizeof p->arg[0], PFn);
+					p->blk = vnew(0, sizeof p->blk[0], PFn);
 					a->phi = p;
 					if (!bshas(defs, a->id))
 					if (!bshas(u, a->id)) {
@@ -260,7 +264,7 @@ getstk(int t, Blk *b, Name **stk)
 	stk[t] = n;
 	if (!n) {
 		/* uh, oh, warn */
-		return CON_Z;
+		return UNDEF;
 	} else
 		return n->r;
 }

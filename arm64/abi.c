@@ -1,5 +1,6 @@
 #include "all.h"
 
+typedef struct Abi Abi;
 typedef struct Class Class;
 typedef struct Insl Insl;
 typedef struct Params Params;
@@ -17,6 +18,7 @@ struct Class {
 		uchar size;
 	} hfa;
 	uint size;
+	uint align;
 	Typ *t;
 	uchar nreg;
 	uchar ngp;
@@ -33,11 +35,15 @@ struct Insl {
 struct Params {
 	uint ngp;
 	uint nfp;
-	uint nstk;
+	uint stk;
 };
 
 static int gpreg[12] = {R0, R1, R2, R3, R4, R5, R6, R7};
 static int fpreg[12] = {V0, V1, V2, V3, V4, V5, V6, V7};
+static int store[] = {
+	[Kw] = Ostorew, [Kl] = Ostorel,
+	[Ks] = Ostores, [Kd] = Ostored
+};
 
 /* layout of call's second argument (RCall)
  *
@@ -92,9 +98,10 @@ typclass(Class *c, Typ *t, int *gp, int *fp)
 	c->class = 0;
 	c->ngp = 0;
 	c->nfp = 0;
+	c->align = 8;
 
-	if (t->align > 4)
-		err("alignments larger than 16 are not supported");
+	if (t->align > 3)
+		err("alignments larger than 8 are not supported");
 
 	if (t->isdark || sz > 16 || sz == 0) {
 		/* large structs are replaced by a
@@ -130,10 +137,6 @@ typclass(Class *c, Typ *t, int *gp, int *fp)
 static void
 sttmps(Ref tmp[], int cls[], uint nreg, Ref mem, Fn *fn)
 {
-	static int st[] = {
-		[Kw] = Ostorew, [Kl] = Ostorel,
-		[Ks] = Ostores, [Kd] = Ostored
-	};
 	uint n;
 	uint64_t off;
 	Ref r;
@@ -143,7 +146,7 @@ sttmps(Ref tmp[], int cls[], uint nreg, Ref mem, Fn *fn)
 	for (n=0; n<nreg; n++) {
 		tmp[n] = newtmp("abi", cls[n], fn);
 		r = newtmp("abi", Kl, fn);
-		emit(st[cls[n]], 0, R, tmp[n], r);
+		emit(store[cls[n]], 0, R, tmp[n], r);
 		emit(Oadd, Kl, r, mem, getcon(off, fn));
 		off += KWIDE(cls[n]) ? 8 : 4;
 	}
@@ -185,7 +188,8 @@ selret(Blk *b, Fn *fn)
 		typclass(&cr, &typ[fn->retty], gpreg, fpreg);
 		if (cr.class & Cptr) {
 			assert(rtype(fn->retr) == RTmp);
-			blit0(fn->retr, r, cr.t->size, fn);
+			emit(Oblit1, 0, R, INT(cr.t->size), R);
+			emit(Oblit0, 0, R, r, fn->retr);
 			cty = 0;
 		} else {
 			ldregs(cr.reg, cr.cls, cr.nreg, r, fn);
@@ -208,10 +212,11 @@ selret(Blk *b, Fn *fn)
 static int
 argsclass(Ins *i0, Ins *i1, Class *carg)
 {
-	int envc, ngp, nfp, *gp, *fp;
+	int va, envc, ngp, nfp, *gp, *fp;
 	Class *c;
 	Ins *i;
 
+	va = 0;
 	envc = 0;
 	gp = gpreg;
 	fp = fpreg;
@@ -219,10 +224,32 @@ argsclass(Ins *i0, Ins *i1, Class *carg)
 	nfp = 8;
 	for (i=i0, c=carg; i<i1; i++, c++)
 		switch (i->op) {
+		case Oargsb:
+		case Oargub:
+		case Oparsb:
+		case Oparub:
+			c->size = 1;
+			goto Scalar;
+		case Oargsh:
+		case Oarguh:
+		case Oparsh:
+		case Oparuh:
+			c->size = 2;
+			goto Scalar;
 		case Opar:
 		case Oarg:
-			*c->cls = i->cls;
 			c->size = 8;
+			if (T.apple && !KWIDE(i->cls))
+				c->size = 4;
+		Scalar:
+			c->align = c->size;
+			*c->cls = i->cls;
+			if (va) {
+				c->class |= Cstk;
+				c->size = 8;
+				c->align = 8;
+				break;
+			}
 			if (KBASE(i->cls) == 0 && ngp > 0) {
 				ngp--;
 				*c->reg = *gp++;
@@ -258,6 +285,7 @@ argsclass(Ins *i0, Ins *i1, Class *carg)
 			envc = 1;
 			break;
 		case Oargv:
+			va = T.apple != 0;
 			break;
 		default:
 			die("unreachable");
@@ -327,14 +355,19 @@ stkblob(Ref r, Class *c, Fn *fn, Insl **ilp)
 	*ilp = il;
 }
 
+static uint
+align(uint x, uint al)
+{
+	return (x + al-1) & -al;
+}
+
 static void
 selcall(Fn *fn, Ins *i0, Ins *i1, Insl **ilp)
 {
 	Ins *i;
 	Class *ca, *c, cr;
-	int cty;
-	uint n;
-	uint64_t stk, off;
+	int op, cty;
+	uint n, stk, off;;
 	Ref r, rstk, tmp[4];
 
 	ca = alloc((i1-i0) * sizeof ca[0]);
@@ -347,10 +380,12 @@ selcall(Fn *fn, Ins *i0, Ins *i1, Insl **ilp)
 			stkblob(i->arg[0], c, fn, ilp);
 			i->op = Oarg;
 		}
-		if (c->class & Cstk)
+		if (c->class & Cstk) {
+			stk = align(stk, c->align);
 			stk += c->size;
+		}
 	}
-	stk += stk & 15;
+	stk = align(stk, 16);
 	rstk = getcon(stk, fn);
 	if (stk)
 		emit(Oadd, Kl, TMP(SP), TMP(SP), rstk);
@@ -403,21 +438,32 @@ selcall(Fn *fn, Ins *i0, Ins *i1, Insl **ilp)
 	for (i=i0, c=ca; i<i1; i++, c++) {
 		if ((c->class & Cstk) == 0)
 			continue;
-		if (i->op == Oarg) {
-			r = newtmp("abi", Kl, fn);
-			emit(Ostorel, 0, R, i->arg[0], r);
-			emit(Oadd, Kl, r, TMP(SP), getcon(off, fn));
+		off = align(off, c->align);
+		r = newtmp("abi", Kl, fn);
+		if (i->op == Oarg || isargbh(i->op)) {
+			switch (c->size) {
+			case 1: op = Ostoreb; break;
+			case 2: op = Ostoreh; break;
+			case 4:
+			case 8: op = store[*c->cls]; break;
+			}
+			emit(op, 0, R, i->arg[0], r);
+		} else {
+			assert(i->op == Oargc);
+			emit(Oblit1, 0, R, INT(c->size), R);
+			emit(Oblit0, 0, R, i->arg[1], r);
 		}
-		if (i->op == Oargc)
-			blit(TMP(SP), off, i->arg[1], 0, c->size, fn);
+		emit(Oadd, Kl, r, TMP(SP), getcon(off, fn));
 		off += c->size;
 	}
 	if (stk)
 		emit(Osub, Kl, TMP(SP), TMP(SP), rstk);
 
 	for (i=i0, c=ca; i<i1; i++, c++)
-		if (c->class & Cptr)
-			blit0(i->arg[0], i->arg[1], c->t->size, fn);
+		if (c->class & Cptr) {
+			emit(Oblit1, 0, R, INT(c->t->size), R);
+			emit(Oblit0, 0, R, i->arg[1], i->arg[0]);
+		}
 }
 
 static Params
@@ -426,7 +472,8 @@ selpar(Fn *fn, Ins *i0, Ins *i1)
 	Class *ca, *c, cr;
 	Insl *il;
 	Ins *i;
-	int n, s, cty;
+	int op, n, cty;
+	uint off;
 	Ref r, tmp[16], *t;
 
 	ca = alloc((i1-i0) * sizeof ca[0]);
@@ -457,26 +504,32 @@ selpar(Fn *fn, Ins *i0, Ins *i1)
 	}
 
 	t = tmp;
-	s = 2;
+	off = 0;
 	for (i=i0, c=ca; i<i1; i++, c++)
 		if (i->op == Oparc && !(c->class & Cptr)) {
 			if (c->class & Cstk) {
-				fn->tmp[i->to.val].slot = -s;
-				s += c->size / 8;
+				off = align(off, c->align);
+				fn->tmp[i->to.val].slot = -(off+2);
+				off += c->size;
 			} else
 				for (n=0; n<c->nreg; n++) {
 					r = TMP(c->reg[n]);
 					emit(Ocopy, c->cls[n], *t++, r, R);
 				}
 		} else if (c->class & Cstk) {
-			emit(Oload, *c->cls, i->to, SLOT(-s), R);
-			s++;
+			off = align(off, c->align);
+			if (isparbh(i->op))
+				op = Oloadsb + (i->op - Oparsb);
+			else
+				op = Oload;
+			emit(op, *c->cls, i->to, SLOT(-(off+2)), R);
+			off += c->size;
 		} else {
 			emit(Ocopy, *c->cls, i->to, TMP(*c->reg), R);
 		}
 
 	return (Params){
-		.nstk = s - 2,
+		.stk = align(off, 8),
 		.ngp = (cty >> 5) & 15,
 		.nfp = (cty >> 9) & 15
 	};
@@ -514,7 +567,24 @@ chpred(Blk *b, Blk *bp, Blk *bp1)
 }
 
 static void
-selvaarg(Fn *fn, Blk *b, Ins *i)
+apple_selvaarg(Fn *fn, Blk *b, Ins *i)
+{
+	Ref ap, stk, stk8, c8;
+
+	(void)b;
+	c8 = getcon(8, fn);
+	ap = i->arg[0];
+	stk8 = newtmp("abi", Kl, fn);
+	stk = newtmp("abi", Kl, fn);
+
+	emit(Ostorel, 0, R, stk8, ap);
+	emit(Oadd, Kl, stk8, stk, c8);
+	emit(Oload, i->cls, i->to, stk, R);
+	emit(Oload, Kl, stk, ap, R);
+}
+
+static void
+arm64_selvaarg(Fn *fn, Blk *b, Ins *i)
 {
 	Ref loc, lreg, lstk, nr, r0, r1, c8, c16, c24, c28, ap;
 	Blk *b0, *bstk, *breg;
@@ -588,8 +658,8 @@ selvaarg(Fn *fn, Blk *b, Ins *i)
 	*b0->phi = (Phi){
 		.cls = Kl, .to = loc,
 		.narg = 2,
-		.blk = vnew(2, sizeof b0->phi->blk[0], Pfn),
-		.arg = vnew(2, sizeof b0->phi->arg[0], Pfn),
+		.blk = vnew(2, sizeof b0->phi->blk[0], PFn),
+		.arg = vnew(2, sizeof b0->phi->arg[0], PFn),
 	};
 	b0->phi->blk[0] = bstk;
 	b0->phi->blk[1] = breg;
@@ -607,7 +677,21 @@ selvaarg(Fn *fn, Blk *b, Ins *i)
 }
 
 static void
-selvastart(Fn *fn, Params p, Ref ap)
+apple_selvastart(Fn *fn, Params p, Ref ap)
+{
+	Ref off, stk, arg;
+
+	off = getcon(p.stk, fn);
+	stk = newtmp("abi", Kl, fn);
+	arg = newtmp("abi", Kl, fn);
+
+	emit(Ostorel, 0, R, arg, ap);
+	emit(Oadd, Kl, arg, stk, off);
+	emit(Oaddr, Kl, stk, SLOT(-1), R);
+}
+
+static void
+arm64_selvastart(Fn *fn, Params p, Ref ap)
 {
 	Ref r0, r1, rsave;
 
@@ -615,7 +699,7 @@ selvastart(Fn *fn, Params p, Ref ap)
 
 	r0 = newtmp("abi", Kl, fn);
 	emit(Ostorel, Kw, R, r0, ap);
-	emit(Oadd, Kl, r0, rsave, getcon(p.nstk*8 + 192, fn));
+	emit(Oadd, Kl, r0, rsave, getcon(p.stk + 192, fn));
 
 	r0 = newtmp("abi", Kl, fn);
 	r1 = newtmp("abi", Kl, fn);
@@ -686,10 +770,16 @@ arm64_abi(Fn *fn)
 				i = i0;
 				break;
 			case Ovastart:
-				selvastart(fn, p, i->arg[0]);
+				if (T.apple)
+					apple_selvastart(fn, p, i->arg[0]);
+				else
+					arm64_selvastart(fn, p, i->arg[0]);
 				break;
 			case Ovaarg:
-				selvaarg(fn, b, i);
+				if (T.apple)
+					apple_selvaarg(fn, b, i);
+				else
+					arm64_selvaarg(fn, b, i);
 				break;
 			case Oarg:
 			case Oargc:
@@ -704,6 +794,57 @@ arm64_abi(Fn *fn)
 
 	if (debug['A']) {
 		fprintf(stderr, "\n> After ABI lowering:\n");
+		printfn(fn, stderr);
+	}
+}
+
+/* abi0 for apple target; introduces
+ * necessery sign extension for arg
+ * passing & returns
+ */
+void
+apple_extsb(Fn *fn)
+{
+	Blk *b;
+	Ins *i0, *i1, *i;
+	int j, op;
+	Ref r;
+
+	for (b=fn->start; b; b=b->link) {
+		curi = &insb[NIns];
+		j = b->jmp.type;
+		if (isretbh(j)) {
+			r = newtmp("abi", Kw, fn);
+			op = Oextsb + (j - Jretsb);
+			emit(op, Kw, r, b->jmp.arg, R);
+			b->jmp.arg = r;
+		}
+		for (i=&b->ins[b->nins]; i>b->ins;) {
+			emiti(*--i);
+			if (i->op != Ocall)
+				continue;
+			for (i0=i1=i; i0>b->ins; i0--)
+				if (!isarg((i0-1)->op))
+					break;
+			for (i=i1; i>i0;) {
+				emiti(*--i);
+				if (isargbh(i->op)) {
+					i->to = newtmp("abi", Kl, fn);
+					curi->arg[0] = i->to;
+				}
+			}
+			for (i=i1; i>i0;)
+				if (isargbh((--i)->op)) {
+					op = Oextsb + (i->op - Oargsb);
+					emit(op, Kw, i->to, i->arg[0], R);
+				}
+		}
+		b->nins = &insb[NIns] - curi;
+		idup(&b->ins, curi, b->nins);
+	}
+
+	if (debug['A']) {
+		fprintf(stderr, "\n> After apple_extsb:\n");
 		printfn(fn, stderr);
 	}
 }

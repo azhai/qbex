@@ -1,8 +1,8 @@
 #include "all.h"
 
 enum {
-	Bot = -2, /* lattice bottom */
-	Top = -1, /* lattice top */
+	Bot = -1, /* lattice bottom */
+	Top = 0,  /* lattice top (matches UNDEF) */
 };
 
 typedef struct Edge Edge;
@@ -126,7 +126,6 @@ visitjmp(Blk *b, int n, Fn *fn)
 	switch (b->jmp.type) {
 	case Jjnz:
 		l = latval(b->jmp.arg);
-		assert(l != Top && "ssa invariant broken");
 		if (l == Bot) {
 			edge[n][1].work = flowrk;
 			edge[n][0].work = &edge[n][1];
@@ -146,6 +145,8 @@ visitjmp(Blk *b, int n, Fn *fn)
 	case Jjmp:
 		edge[n][0].work = flowrk;
 		flowrk = &edge[n][0];
+		break;
+	case Jhlt:
 		break;
 	default:
 		if (isret(b->jmp.type))
@@ -172,7 +173,6 @@ renref(Ref *r)
 
 	if (rtype(*r) == RTmp)
 		if ((l=val[r->val]) != Bot) {
-			assert(l != Top && "ssa invariant broken");
 			*r = CON(l);
 			return 1;
 		}
@@ -193,7 +193,7 @@ fold(Fn *fn)
 
 	val = emalloc(fn->ntmp * sizeof val[0]);
 	edge = emalloc(fn->nblk * sizeof edge[0]);
-	usewrk = vnew(0, sizeof usewrk[0], Pheap);
+	usewrk = vnew(0, sizeof usewrk[0], PHeap);
 
 	for (t=0; t<fn->ntmp; t++)
 		val[t] = Top;
@@ -292,9 +292,13 @@ fold(Fn *fn)
 		for (i=b->ins; i<&b->ins[b->nins]; i++)
 			if (renref(&i->to))
 				*i = (Ins){.op = Onop};
-			else
+			else {
 				for (n=0; n<2; n++)
 					renref(&i->arg[n]);
+				if (isstore(i->op))
+				if (req(i->arg[0], UNDEF))
+					*i = (Ins){.op = Onop};
+			}
 		renref(&b->jmp.arg);
 		if (b->jmp.type == Jjnz && rtype(b->jmp.arg) == RCon) {
 				if (iscon(&fn->con[b->jmp.arg.val], 0, 0)) {
@@ -333,31 +337,31 @@ foldint(Con *res, int op, int w, Con *cl, Con *cr)
 		double fd;
 	} l, r;
 	uint64_t x;
-	uint32_t lab;
+	Sym sym;
 	int typ;
 
+	memset(&sym, 0, sizeof sym);
 	typ = CBits;
-	lab = 0;
 	l.s = cl->bits.i;
 	r.s = cr->bits.i;
 	if (op == Oadd) {
 		if (cl->type == CAddr) {
 			if (cr->type == CAddr)
 				return 1;
-			lab = cl->label;
 			typ = CAddr;
+			sym = cl->sym;
 		}
 		else if (cr->type == CAddr) {
-			lab = cr->label;
 			typ = CAddr;
+			sym = cr->sym;
 		}
 	}
 	else if (op == Osub) {
 		if (cl->type == CAddr) {
 			if (cr->type != CAddr) {
-				lab = cl->label;
 				typ = CAddr;
-			} else if (cl->label != cr->label)
+				sym = cl->sym;
+			} else if (!symeq(cl->sym, cr->sym))
 				return 1;
 		}
 		else if (cr->type == CAddr)
@@ -403,8 +407,8 @@ foldint(Con *res, int op, int w, Con *cl, Con *cr)
 	case Ocast:
 		x = l.u;
 		if (cl->type == CAddr) {
-			lab = cl->label;
 			typ = CAddr;
+			sym = cl->sym;
 		}
 		break;
 	default:
@@ -457,7 +461,7 @@ foldint(Con *res, int op, int w, Con *cl, Con *cr)
 		else
 			die("unreachable");
 	}
-	*res = (Con){.type=typ, .label=lab, .bits={.i=x}};
+	*res = (Con){.type=typ, .sym=sym, .bits={.i=x}};
 	return 0;
 }
 
@@ -523,6 +527,8 @@ opfold(int op, int cls, Con *cl, Con *cr, Fn *fn)
 			return Bot;
 	} else
 		foldflt(&c, op, cls == Kd, cl, cr);
+	if (!KWIDE(cls))
+		c.bits.i &= 0xffffffff;
 	r = newcon(&c, fn);
 	assert(!(cls == Ks || cls == Kd) || c.flt);
 	return r.val;

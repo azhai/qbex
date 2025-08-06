@@ -25,10 +25,11 @@ char *tok[] = {
 	"cgtd", "cged", "cned", "ceqd", "cod", "cuod",
 	"vaarg", "vastart", "...", "env",
 
-	"call", "phi", "jmp", "jnz", "ret", "export",
-	"function", "type", "data", "section", "align",
-	"l", "w", "h", "b", "d", "s", "z", "loadw", "loadl",
-	"loads", "loadd", "alloc1", "alloc2",
+	"call", "phi", "jmp", "jnz", "ret", "hlt", "export",
+	"function", "type", "data", "section", "align", "blit",
+	"l", "w", "sh", "uh", "h", "sb", "ub", "b",
+	"d", "s", "z", "loadw", "loadl", "loads", "loadd",
+	"alloc1", "alloc2",
 
 };
 enum {
@@ -69,7 +70,7 @@ main()
 		th[i] = h;
 	}
 
-	for (i=0; 1<<i < Ntok; ++i);
+	for (i=9; 1<<i < Ntok; ++i);
 	M = 32 - i;
 
 	for (;; --M) {

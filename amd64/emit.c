@@ -142,20 +142,19 @@ static char *rname[][4] = {
 
 
 static int
-slot(int s, Fn *fn)
+slot(Ref r, Fn *fn)
 {
-	struct { int i:29; } x;
+	int s;
 
-	/* sign extend s using a bitfield */
-	x.i = s;
-	assert(x.i <= fn->slot);
+	s = rsval(r);
+	assert(s <= fn->slot);
 	/* specific to NAlign == 3 */
-	if (x.i < 0)
-		return -4 * x.i;
+	if (s < 0)
+		return -4 * s;
 	else if (fn->vararg)
-		return -176 + -4 * (fn->slot - x.i);
+		return -176 + -4 * (fn->slot - s);
 	else
-		return -4 * (fn->slot - x.i);
+		return -4 * (fn->slot - s);
 }
 
 static void
@@ -165,9 +164,15 @@ emitcon(Con *con, FILE *f)
 
 	switch (con->type) {
 	case CAddr:
-		l = str(con->label);
-		p = con->local ? gasloc : l[0] == '"' ? "" : gassym;
-		fprintf(f, "%s%s", p, l);
+		l = str(con->sym.id);
+		p = l[0] == '"' ? "" : T.assym;
+		if (con->sym.type == SThr) {
+			if (T.apple)
+				fprintf(f, "%s%s@TLVP", p, l);
+			else
+				fprintf(f, "%%fs:%s%s@tpoff", p, l);
+		} else
+			fprintf(f, "%s%s", p, l);
 		if (con->bits.i)
 			fprintf(f, "%+"PRId64, con->bits.i);
 		break;
@@ -280,14 +285,14 @@ Next:
 			fprintf(f, "%%%s", regtoa(ref.val, sz));
 			break;
 		case RSlot:
-			fprintf(f, "%d(%%rbp)", slot(ref.val, fn));
+			fprintf(f, "%d(%%rbp)", slot(ref, fn));
 			break;
 		case RMem:
 		Mem:
 			m = &fn->mem[ref.val];
 			if (rtype(m->base) == RSlot) {
 				off.type = CBits;
-				off.bits.i = slot(m->base.val, fn);
+				off.bits.i = slot(m->base, fn);
 				addcon(&m->offset, &off);
 				m->base = TMP(RBP);
 			}
@@ -332,12 +337,13 @@ Next:
 		case RMem:
 			goto Mem;
 		case RSlot:
-			fprintf(f, "%d(%%rbp)", slot(ref.val, fn));
+			fprintf(f, "%d(%%rbp)", slot(ref, fn));
 			break;
 		case RCon:
 			off = fn->con[ref.val];
 			emitcon(&off, f);
 			if (off.type == CAddr)
+			if (off.sym.type != SThr || T.apple)
 				fprintf(f, "(%%rip)");
 			break;
 		case RTmp:
@@ -425,8 +431,8 @@ emitins(Ins i, Fn *fn, FILE *f)
 			fprintf(f,
 				"\txorp%c %sfp%d(%%rip), %%%s\n",
 				"xxsd"[i.cls],
-				gasloc,
-				gasstash(negmask[i.cls], 16),
+				T.asloc,
+				stashbits(negmask[i.cls], 16),
 				regtoa(i.to.val, SLong)
 			);
 		break;
@@ -549,7 +555,7 @@ amd64_emitfn(Fn *fn, FILE *f)
 	int *r, c, o, n, lbl;
 	uint64_t fs;
 
-	gasemitlnk(fn->name, &fn->lnk, ".text", f);
+	emitfnlnk(fn->name, &fn->lnk, f);
 	fputs("\tpushq %rbp\n\tmovq %rsp, %rbp\n", f);
 	fs = framesz(fn);
 	if (fs)
@@ -570,11 +576,14 @@ amd64_emitfn(Fn *fn, FILE *f)
 
 	for (lbl=0, b=fn->start; b; b=b->link) {
 		if (lbl || b->npred > 1)
-			fprintf(f, "%sbb%d:\n", gasloc, id0+b->id);
+			fprintf(f, "%sbb%d:\n", T.asloc, id0+b->id);
 		for (i=b->ins; i!=&b->ins[b->nins]; i++)
 			emitins(*i, fn, f);
 		lbl = 1;
 		switch (b->jmp.type) {
+		case Jhlt:
+			fprintf(f, "\tud2\n");
+			break;
 		case Jret0:
 			if (fn->dynalloc)
 				fprintf(f,
@@ -596,7 +605,7 @@ amd64_emitfn(Fn *fn, FILE *f)
 		Jmp:
 			if (b->s1 != b->link)
 				fprintf(f, "\tjmp %sbb%d\n",
-					gasloc, id0+b->s1->id);
+					T.asloc, id0+b->s1->id);
 			else
 				lbl = 0;
 			break;
@@ -610,11 +619,13 @@ amd64_emitfn(Fn *fn, FILE *f)
 				} else
 					c = cmpneg(c);
 				fprintf(f, "\tj%s %sbb%d\n", ctoa[c],
-					gasloc, id0+b->s2->id);
+					T.asloc, id0+b->s2->id);
 				goto Jmp;
 			}
 			die("unhandled jump %d", b->jmp.type);
 		}
 	}
 	id0 += fn->nblk;
+	if (!T.apple)
+		elf_emitfnfin(fn->name, f);
 }

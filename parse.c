@@ -3,8 +3,15 @@
 #include <stdarg.h>
 
 enum {
-	Ke = -2, /* Erroneous mode */
-	Km = Kl, /* Memory pointer */
+	Ksb = 4, /* matches Oarg/Opar/Jret */
+	Kub,
+	Ksh,
+	Kuh,
+	Kc,
+	K0,
+
+	Ke = -2, /* erroneous mode */
+	Km = Kl, /* memory pointer */
 };
 
 Op optab[NOp] = {
@@ -20,7 +27,7 @@ typedef enum {
 	PEnd,
 } PState;
 
-enum {
+enum Token {
 	Txxx = 0,
 
 	/* aliases */
@@ -31,13 +38,16 @@ enum {
 	Talloc1,
 	Talloc2,
 
+	Tblit,
 	Tcall,
 	Tenv,
 	Tphi,
 	Tjmp,
 	Tjnz,
 	Tret,
+	Thlt,
 	Texport,
+	Tthread,
 	Tfunc,
 	Ttype,
 	Tdata,
@@ -45,7 +55,11 @@ enum {
 	Talign,
 	Tl,
 	Tw,
+	Tsh,
+	Tuh,
 	Th,
+	Tsb,
+	Tub,
 	Tb,
 	Td,
 	Ts,
@@ -81,24 +95,31 @@ static char *kwmap[Ntok] = {
 	[Tloadd] = "loadd",
 	[Talloc1] = "alloc1",
 	[Talloc2] = "alloc2",
+	[Tblit] = "blit",
 	[Tcall] = "call",
 	[Tenv] = "env",
 	[Tphi] = "phi",
 	[Tjmp] = "jmp",
 	[Tjnz] = "jnz",
 	[Tret] = "ret",
+	[Thlt] = "hlt",
 	[Texport] = "export",
+	[Tthread] = "thread",
 	[Tfunc] = "function",
 	[Ttype] = "type",
 	[Tdata] = "data",
 	[Tsection] = "section",
 	[Talign] = "align",
-	[Tl] = "l",
-	[Tw] = "w",
-	[Th] = "h",
+	[Tsb] = "sb",
+	[Tub] = "ub",
+	[Tsh] = "sh",
+	[Tuh] = "uh",
 	[Tb] = "b",
-	[Td] = "d",
+	[Th] = "h",
+	[Tw] = "w",
+	[Tl] = "l",
 	[Ts] = "s",
+	[Td] = "d",
 	[Tz] = "z",
 	[Tdots] = "...",
 };
@@ -109,7 +130,7 @@ enum {
 	TMask = 16383, /* for temps hash */
 	BMask = 8191, /* for blocks hash */
 
-	K = 5041217, /* found using tools/lexh.c */
+	K = 9583425, /* found using tools/lexh.c */
 	M = 23,
 };
 
@@ -142,7 +163,7 @@ err(char *s, ...)
 	va_list ap;
 
 	va_start(ap, s);
-	fprintf(stderr, "%s:%d: ", inpath, lnum);
+	fprintf(stderr, "qbe:%s:%d: ", inpath, lnum);
 	vfprintf(stderr, s, ap);
 	fprintf(stderr, "\n");
 	va_end(ap);
@@ -262,7 +283,7 @@ lex()
 	if (c == '"') {
 		t = Tstr;
 	Quoted:
-		tokval.str = vnew(2, 1, Pfn);
+		tokval.str = vnew(2, 1, PFn);
 		tokval.str[0] = c;
 		esc = 0;
 		for (i=1;; i++) {
@@ -384,30 +405,34 @@ parseref()
 
 	memset(&c, 0, sizeof c);
 	switch (next()) {
+	default:
+		return R;
 	case Ttmp:
 		return tmpref(tokval.str);
 	case Tint:
 		c.type = CBits;
 		c.bits.i = tokval.num;
-		goto Look;
+		break;
 	case Tflts:
 		c.type = CBits;
 		c.bits.s = tokval.flts;
 		c.flt = 1;
-		goto Look;
+		break;
 	case Tfltd:
 		c.type = CBits;
 		c.bits.d = tokval.fltd;
 		c.flt = 2;
-		goto Look;
+		break;
+	case Tthread:
+		c.sym.type = SThr;
+		expect(Tglo);
+		/* fall through */
 	case Tglo:
 		c.type = CAddr;
-		c.label = intern(tokval.str);
-	Look:
-		return newcon(&c, curf);
-	default:
-		return R;
+		c.sym.id = intern(tokval.str);
+		break;
 	}
+	return newcon(&c, curf);
 }
 
 static int
@@ -427,7 +452,15 @@ parsecls(int *tyn)
 		err("invalid class specifier");
 	case Ttyp:
 		*tyn = findtyp(ntyp);
-		return 4;
+		return Kc;
+	case Tsb:
+		return Ksb;
+	case Tub:
+		return Kub;
+	case Tsh:
+		return Ksh;
+	case Tuh:
+		return Kuh;
 	case Tw:
 		return Kw;
 	case Tl:
@@ -450,7 +483,7 @@ parserefl(int arg)
 	expect(Tlparen);
 	while (peek() != Trparen) {
 		if (curi - insb >= NIns)
-			err("too many instructions (1)");
+			err("too many instructions");
 		if (!arg && vararg)
 			err("no parameters allowed after '...'");
 		switch (peek()) {
@@ -482,16 +515,21 @@ parserefl(int arg)
 			err("invalid argument");
 		if (!arg && rtype(r) != RTmp)
 			err("invalid function parameter");
-		if (k == 4)
-			if (arg)
-				*curi = (Ins){Oargc, Kl, R, {TYPE(ty), r}};
-			else
-				*curi = (Ins){Oparc, Kl, r, {TYPE(ty)}};
-		else if (env)
+		if (env)
 			if (arg)
 				*curi = (Ins){Oarge, k, R, {r}};
 			else
 				*curi = (Ins){Opare, k, r, {R}};
+		else if (k == Kc)
+			if (arg)
+				*curi = (Ins){Oargc, Kl, R, {TYPE(ty), r}};
+			else
+				*curi = (Ins){Oparc, Kl, r, {TYPE(ty)}};
+		else if (k >= Ksb)
+			if (arg)
+				*curi = (Ins){Oargsb+(k-Ksb), Kw, R, {r}};
+			else
+				*curi = (Ins){Oparsb+(k-Ksb), Kw, r, {R}};
 		else
 			if (arg)
 				*curi = (Ins){Oarg, k, R, {r}};
@@ -542,6 +580,7 @@ parseline(PState ps)
 	Phi *phi;
 	Ref r;
 	Blk *b;
+	Con *c;
 	int t, op, i, k, ty;
 
 	t = nextnl();
@@ -550,6 +589,7 @@ parseline(PState ps)
 	switch (t) {
 	default:
 		if (isstore(t)) {
+		case Tblit:
 		case Tcall:
 		case Ovastart:
 			/* operations without result */
@@ -578,14 +618,10 @@ parseline(PState ps)
 		expect(Tnl);
 		return PPhi;
 	case Tret:
-		curb->jmp.type = (int[]){
-			Jretw, Jretl,
-			Jrets, Jretd,
-			Jretc, Jret0
-		}[rcls];
+		curb->jmp.type = Jretw + rcls;
 		if (peek() == Tnl)
 			curb->jmp.type = Jret0;
-		else if (rcls < 5) {
+		else if (rcls != K0) {
 			r = parseref();
 			if (req(r, R))
 				err("invalid return value");
@@ -611,7 +647,10 @@ parseline(PState ps)
 			curb->s2 = findblk(tokval.str);
 		}
 		if (curb->s1 == curf->start || curb->s2 == curf->start)
-			err("invalid jump to the start node");
+			err("invalid jump to the start block");
+		goto Close;
+	case Thlt:
+		curb->jmp.type = Jhlt;
 	Close:
 		expect(Tnl);
 		closeblk();
@@ -622,21 +661,18 @@ parseline(PState ps)
 	k = parsecls(&ty);
 	op = next();
 DoOp:
-	if (op == Tphi) {
-		if (ps != PPhi || curb == curf->start)
-			err("unexpected phi instruction");
-		op = -1;
-	}
 	if (op == Tcall) {
 		arg[0] = parseref();
 		parserefl(1);
 		op = Ocall;
 		expect(Tnl);
-		if (k == 4) {
+		if (k == Kc) {
 			k = Kl;
 			arg[1] = TYPE(ty);
 		} else
 			arg[1] = R;
+		if (k >= Ksb)
+			k = Kw;
 		goto Ins;
 	}
 	if (op == Tloadw)
@@ -645,16 +681,16 @@ DoOp:
 		op = Oload;
 	if (op == Talloc1 || op == Talloc2)
 		op = Oalloc;
-	if (k == 4)
+	if (op == Ovastart && !curf->vararg)
+		err("cannot use vastart in non-variadic function");
+	if (k >= Ksb)
 		err("size class must be w, l, s, or d");
-	if (op >= NPubOp)
-		err("invalid instruction");
 	i = 0;
 	if (peek() != Tnl)
 		for (;;) {
 			if (i == NPred)
 				err("too many arguments");
-			if (op == -1) {
+			if (op == Tphi) {
 				expect(Tlbl);
 				blk[i] = findblk(tokval.str);
 			}
@@ -670,10 +706,47 @@ DoOp:
 			next();
 		}
 	next();
-Ins:
-	if (op != -1) {
+	switch (op) {
+	case Tphi:
+		if (ps != PPhi || curb == curf->start)
+			err("unexpected phi instruction");
+		phi = alloc(sizeof *phi);
+		phi->to = r;
+		phi->cls = k;
+		phi->arg = vnew(i, sizeof arg[0], PFn);
+		memcpy(phi->arg, arg, i * sizeof arg[0]);
+		phi->blk = vnew(i, sizeof blk[0], PFn);
+		memcpy(phi->blk, blk, i * sizeof blk[0]);
+		phi->narg = i;
+		*plink = phi;
+		plink = &phi->link;
+		return PPhi;
+	case Tblit:
+		if (curi - insb >= NIns-1)
+			err("too many instructions");
+		memset(curi, 0, 2 * sizeof(Ins));
+		curi->op = Oblit0;
+		curi->arg[0] = arg[0];
+		curi->arg[1] = arg[1];
+		curi++;
+		if (rtype(arg[2]) != RCon)
+			err("blit size must be constant");
+		c = &curf->con[arg[2].val];
+		r = INT(c->bits.i);
+		if (c->type != CBits
+		|| rsval(r) < 0
+		|| rsval(r) != c->bits.i)
+			err("invalid blit size");
+		curi->op = Oblit1;
+		curi->arg[0] = r;
+		curi++;
+		return PIns;
+	default:
+		if (op >= NPubOp)
+			err("invalid instruction");
+	Ins:
 		if (curi - insb >= NIns)
-			err("too many instructions (2)");
+			err("too many instructions");
 		curi->op = op;
 		curi->cls = k;
 		curi->to = r;
@@ -681,18 +754,6 @@ Ins:
 		curi->arg[1] = arg[1];
 		curi++;
 		return PIns;
-	} else {
-		phi = alloc(sizeof *phi);
-		phi->to = r;
-		phi->cls = k;
-		phi->arg = vnew(i, sizeof arg[0], Pfn);
-		memcpy(phi->arg, arg, i * sizeof arg[0]);
-		phi->blk = vnew(i, sizeof blk[0], Pfn);
-		memcpy(phi->blk, blk, i * sizeof blk[0]);
-		phi->narg = i;
-		*plink = phi;
-		plink = &phi->link;
-		return PPhi;
 	}
 }
 
@@ -774,10 +835,13 @@ typecheck(Fn *fn)
 			}
 		r = b->jmp.arg;
 		if (isret(b->jmp.type)) {
-			if (b->jmp.type == Jretc) {
-				if (!usecheck(r, Kl, fn))
-					goto JErr;
-			} else if (!usecheck(r, b->jmp.type-Jretw, fn))
+			if (b->jmp.type == Jretc)
+				k = Kl;
+			else if (b->jmp.type >= Jretsb)
+				k = Kw;
+			else
+				k = b->jmp.type - Jretw;
+			if (!usecheck(r, k, fn))
 				goto JErr;
 		}
 		if (b->jmp.type == Jjnz && !usecheck(r, Kw, fn))
@@ -803,22 +867,24 @@ parsefn(Lnk *lnk)
 	curi = insb;
 	curf = alloc(sizeof *curf);
 	curf->ntmp = 0;
-	curf->ncon = 1; /* first constant must be 0 */
-	curf->tmp = vnew(curf->ntmp, sizeof curf->tmp[0], Pfn);
-	curf->con = vnew(curf->ncon, sizeof curf->con[0], Pfn);
+	curf->ncon = 2;
+	curf->tmp = vnew(curf->ntmp, sizeof curf->tmp[0], PFn);
+	curf->con = vnew(curf->ncon, sizeof curf->con[0], PFn);
 	for (i=0; i<Tmp0; ++i)
 		if (T.fpr0 <= i && i < T.fpr0 + T.nfpr)
 			newtmp(0, Kd, curf);
 		else
 			newtmp(0, Kl, curf);
 	curf->con[0].type = CBits;
+	curf->con[0].bits.i = 0xdeaddead;  /* UNDEF */
+	curf->con[1].type = CBits;
 	curf->lnk = *lnk;
 	blink = &curf->start;
 	curf->retty = Kx;
 	if (peek() != Tglo)
 		rcls = parsecls(&curf->retty);
 	else
-		rcls = 5;
+		rcls = K0;
 	if (next() != Tglo)
 		err("function name expected");
 	strncpy(curf->name, tokval.str, NString-1);
@@ -833,7 +899,7 @@ parsefn(Lnk *lnk)
 		err("empty function");
 	if (curb->jmp.type == Jxxx)
 		err("last block misses jump");
-	curf->mem = vnew(0, sizeof curf->mem[0], Pfn);
+	curf->mem = vnew(0, sizeof curf->mem[0], PFn);
 	curf->nmem = 0;
 	curf->nblk = nblk;
 	curf->rpo = 0;
@@ -954,7 +1020,7 @@ parsetyp()
 		return;
 	}
 	n = 0;
-	ty->fields = vnew(1, sizeof ty->fields[0], Pheap);
+	ty->fields = vnew(1, sizeof ty->fields[0], PHeap);
 	if (t == Tlbrace) {
 		ty->isunion = 1;
 		do {
@@ -1049,7 +1115,7 @@ parsedat(void cb(Dat *), Lnk *lnk)
 				err("constant literal expected");
 			cb(&d);
 			t = nextnl();
-		} while (t == Tint || t == Tflts || t == Tfltd || t == Tstr);
+		} while (t == Tint || t == Tflts || t == Tfltd || t == Tstr || t == Tglo);
 		if (t == Trbrace)
 			break;
 		if (t != Tcomma)
@@ -1070,7 +1136,12 @@ parselnk(Lnk *lnk)
 		case Texport:
 			lnk->export = 1;
 			break;
+		case Tthread:
+			lnk->thread = 1;
+			break;
 		case Tsection:
+			if (lnk->sec)
+				err("only one section allowed");
 			if (next() != Tstr)
 				err("section \"name\" expected");
 			lnk->sec = tokval.str;
@@ -1080,9 +1151,9 @@ parselnk(Lnk *lnk)
 			}
 			break;
 		default:
-			if (haslnk)
-			if (t != Tdata)
-			if (t != Tfunc)
+			if (t == Tfunc && lnk->thread)
+				err("only data may have thread linkage");
+			if (haslnk && t != Tdata && t != Tfunc)
 				err("only data and function have linkage");
 			return t;
 		}
@@ -1100,7 +1171,7 @@ parse(FILE *f, char *path, void data(Dat *), void func(Fn *))
 	lnum = 1;
 	thead = Txxx;
 	ntyp = 0;
-	typ = vnew(0, sizeof typ[0], Pheap);
+	typ = vnew(0, sizeof typ[0], PHeap);
 	for (;;) {
 		lnk = (Lnk){0};
 		switch (parselnk(&lnk)) {
@@ -1132,7 +1203,7 @@ printcon(Con *c, FILE *f)
 	case CUndef:
 		break;
 	case CAddr:
-		fprintf(f, "$%s", str(c->label));
+		fprintf(f, "$%s", str(c->sym.id));
 		if (c->bits.i)
 			fprintf(f, "%+"PRIi64, c->bits.i);
 		break;
@@ -1161,10 +1232,13 @@ printref(Ref r, Fn *fn, FILE *f)
 			fprintf(f, "%%%s", fn->tmp[r.val].name);
 		break;
 	case RCon:
-		printcon(&fn->con[r.val], f);
+		if (req(r, UNDEF))
+			fprintf(f, "UNDEF");
+		else
+			printcon(&fn->con[r.val], f);
 		break;
 	case RSlot:
-		fprintf(f, "S%d", (r.val&(1<<28)) ? r.val-(1<<29) : r.val);
+		fprintf(f, "S%d", rsval(r));
 		break;
 	case RCall:
 		fprintf(f, "%04x", r.val);
@@ -1194,6 +1268,9 @@ printref(Ref r, Fn *fn, FILE *f)
 		}
 		fputc(']', f);
 		break;
+	case RInt:
+		fprintf(f, "%d", rsval(r));
+		break;
 	}
 }
 
@@ -1211,8 +1288,6 @@ printfn(Fn *fn, FILE *f)
 	Ins *i;
 	uint n;
 
-	if (fn->lnk.export)
-		fprintf(f, "export ");
 	fprintf(f, "function $%s() {\n", fn->name);
 	for (b=fn->start; b; b=b->link) {
 		fprintf(f, "@%s\n", b->name);
@@ -1264,6 +1339,10 @@ printfn(Fn *fn, FILE *f)
 		}
 		switch (b->jmp.type) {
 		case Jret0:
+		case Jretsb:
+		case Jretub:
+		case Jretsh:
+		case Jretuh:
 		case Jretw:
 		case Jretl:
 		case Jrets:
@@ -1278,6 +1357,9 @@ printfn(Fn *fn, FILE *f)
 				fprintf(f, ", :%s", typ[fn->retty].name);
 			fprintf(f, "\n");
 			break;
+		case Jhlt:
+			fprintf(f, "\thlt\n");
+			break;
 		case Jjmp:
 			if (b->s1 != b->link)
 				fprintf(f, "\tjmp @%s\n", b->s1->name);
@@ -1288,6 +1370,7 @@ printfn(Fn *fn, FILE *f)
 				printref(b->jmp.arg, fn, f);
 				fprintf(f, ", ");
 			}
+			assert(b->s1 && b->s2);
 			fprintf(f, "@%s, @%s\n", b->s1->name, b->s2->name);
 			break;
 		}

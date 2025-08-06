@@ -138,16 +138,18 @@ rname(int r, int k)
 }
 
 static uint64_t
-slot(int s, E *e)
+slot(Ref r, E *e)
 {
-	s = ((int32_t)s << 3) >> 3;
+	int s;
+
+	s = rsval(r);
 	if (s == -1)
 		return 16 + e->frame;
 	if (s < 0) {
-		if (e->fn->vararg)
-			return 16 + e->frame + 192 - (s+2)*8;
+		if (e->fn->vararg && !T.apple)
+			return 16 + e->frame + 192 - (s+2);
 		else
-			return 16 + e->frame - (s+2)*8;
+			return 16 + e->frame - (s+2);
 	} else
 		return 16 + e->padding + 4 * s;
 }
@@ -158,7 +160,7 @@ emitf(char *s, Ins *i, E *e)
 	Ref r;
 	int k, c;
 	Con *pc;
-	unsigned n, sp;
+	uint n, sp;
 
 	fputc('\t', e->f);
 
@@ -234,7 +236,7 @@ emitf(char *s, Ins *i, E *e)
 				fprintf(e->f, "[%s]", rname(r.val, Kl));
 				break;
 			case RSlot:
-				fprintf(e->f, "[x29, %"PRIu64"]", slot(r.val, e));
+				fprintf(e->f, "[x29, %"PRIu64"]", slot(r, e));
 				break;
 			}
 			break;
@@ -243,9 +245,58 @@ emitf(char *s, Ins *i, E *e)
 }
 
 static void
-loadcon(Con *c, int r, int k, FILE *f)
+loadaddr(Con *c, char *rn, E *e)
 {
-	char *rn, *p, off[32];
+	char *p, *l, *s;
+
+	switch (c->sym.type) {
+	default:
+		die("unreachable");
+	case SGlo:
+		if (T.apple)
+			s = "\tadrp\tR, S@pageO\n"
+			    "\tadd\tR, R, S@pageoffO\n";
+		else
+			s = "\tadrp\tR, SO\n"
+			    "\tadd\tR, R, #:lo12:SO\n";
+		break;
+	case SThr:
+		if (T.apple)
+			s = "\tadrp\tR, S@tlvppage\n"
+			    "\tldr\tR, [R, S@tlvppageoff]\n";
+		else
+			s = "\tmrs\tR, tpidr_el0\n"
+			    "\tadd\tR, R, #:tprel_hi12:SO, lsl #12\n"
+			    "\tadd\tR, R, #:tprel_lo12_nc:SO\n";
+		break;
+	}
+
+	l = str(c->sym.id);
+	p = l[0] == '"' ? "" : T.assym;
+	for (; *s; s++)
+		switch (*s) {
+		default:
+			fputc(*s, e->f);
+			break;
+		case 'R':
+			fputs(rn, e->f);
+			break;
+		case 'S':
+			fputs(p, e->f);
+			fputs(l, e->f);
+			break;
+		case 'O':
+			if (c->bits.i)
+				/* todo, handle large offsets */
+				fprintf(e->f, "+%"PRIi64, c->bits.i);
+			break;
+		}
+}
+
+static void
+loadcon(Con *c, int r, int k, E *e)
+{
+	char *rn;
 	int64_t n;
 	int w, sh;
 
@@ -253,31 +304,22 @@ loadcon(Con *c, int r, int k, FILE *f)
 	rn = rname(r, k);
 	n = c->bits.i;
 	if (c->type == CAddr) {
-		rn = rname(r, Kl);
-		if (n)
-			sprintf(off, "+%"PRIi64, n);
-		else
-			off[0] = 0;
-		p = c->local ? ".L" : "";
-		fprintf(f, "\tadrp\t%s, %s%s%s\n",
-			rn, p, str(c->label), off);
-		fprintf(f, "\tadd\t%s, %s, #:lo12:%s%s%s\n",
-			rn, rn, p, str(c->label), off);
+		loadaddr(c, rn, e);
 		return;
 	}
 	assert(c->type == CBits);
 	if (!w)
 		n = (int32_t)n;
 	if ((n | 0xffff) == -1 || arm64_logimm(n, k)) {
-		fprintf(f, "\tmov\t%s, #%"PRIi64"\n", rn, n);
+		fprintf(e->f, "\tmov\t%s, #%"PRIi64"\n", rn, n);
 	} else {
-		fprintf(f, "\tmov\t%s, #%d\n",
+		fprintf(e->f, "\tmov\t%s, #%d\n",
 			rn, (int)(n & 0xffff));
 		for (sh=16; n>>=16; sh+=16) {
 			if ((!w && sh == 32) || sh == 64)
 				break;
-			fprintf(f, "\tmovk\t%s, #0x%x, lsl #%d\n",
-				rn, (unsigned)(n & 0xffff), sh);
+			fprintf(e->f, "\tmovk\t%s, #0x%x, lsl #%d\n",
+				rn, (uint)(n & 0xffff), sh);
 		}
 	}
 }
@@ -293,7 +335,7 @@ fixarg(Ref *pr, int sz, E *e)
 
 	r = *pr;
 	if (rtype(r) == RSlot) {
-		s = slot(r.val, e);
+		s = slot(r, e);
 		if (s > sz * 4095u) {
 			i = &(Ins){Oaddr, Kl, TMP(IP0), {r}};
 			emitins(i, e);
@@ -305,10 +347,11 @@ fixarg(Ref *pr, int sz, E *e)
 static void
 emitins(Ins *i, E *e)
 {
-	char *rn;
+	char *l, *p, *rn;
 	uint64_t s;
 	int o;
 	Ref r;
+	Con *c;
 
 	switch (i->op) {
 	default:
@@ -354,7 +397,8 @@ emitins(Ins *i, E *e)
 		assert(isreg(i->to));
 		switch (rtype(i->arg[0])) {
 		case RCon:
-			loadcon(&e->fn->con[i->arg[0].val], i->to.val, i->cls, e->f);
+			c = &e->fn->con[i->arg[0].val];
+			loadcon(c, i->to.val, i->cls, e);
 			break;
 		case RSlot:
 			i->op = Oload;
@@ -368,7 +412,7 @@ emitins(Ins *i, E *e)
 	case Oaddr:
 		assert(rtype(i->arg[0]) == RSlot);
 		rn = rname(i->to.val, Kl);
-		s = slot(i->arg[0].val, e);
+		s = slot(i->arg[0], e);
 		if (s <= 4095)
 			fprintf(e->f, "\tadd\t%s, x29, #%"PRIu64"\n", rn, s);
 		else if (s <= 65535)
@@ -384,6 +428,18 @@ emitins(Ins *i, E *e)
 				"\tadd\t%s, x29, %s\n",
 				rn, s & 0xFFFF, rn, s >> 16, rn, rn
 			);
+		break;
+	case Ocall:
+		if (rtype(i->arg[0]) != RCon)
+			goto Table;
+		c = &e->fn->con[i->arg[0].val];
+		if (c->type != CAddr
+		|| c->sym.type != SGlo
+		|| c->bits.i)
+			die("invalid call argument");
+		l = str(c->sym.id);
+		p = l[0] == '"' ? "" : T.assym;
+		fprintf(e->f, "\tbl\t%s%s\n", p, l);
 		break;
 	case Osalloc:
 		emitf("sub sp, sp, %0", i, e);
@@ -451,11 +507,13 @@ arm64_emitfn(Fn *fn, FILE *out)
 	Ins *i;
 	E *e;
 
-	gasemitlnk(fn->name, &fn->lnk, ".text", out);
 	e = &(E){.f = out, .fn = fn};
+	if (T.apple)
+		e->fn->lnk.align = 4;
+	emitfnlnk(e->fn->name, &e->fn->lnk, e->f);
 	framelayout(e);
 
-	if (e->fn->vararg) {
+	if (e->fn->vararg && !T.apple) {
 		for (n=7; n>=0; n--)
 			fprintf(e->f, "\tstr\tq%d, [sp, -16]!\n", n);
 		for (n=7; n>=0; n-=2)
@@ -500,11 +558,14 @@ arm64_emitfn(Fn *fn, FILE *out)
 
 	for (lbl=0, b=e->fn->start; b; b=b->link) {
 		if (lbl || b->npred > 1)
-			fprintf(e->f, ".L%d:\n", id0+b->id);
+			fprintf(e->f, "%s%d:\n", T.asloc, id0+b->id);
 		for (i=b->ins; i!=&b->ins[b->nins]; i++)
 			emitins(i, e);
 		lbl = 1;
 		switch (b->jmp.type) {
+		case Jhlt:
+			fprintf(e->f, "\tbrk\t#1000\n");
+			break;
 		case Jret0:
 			s = (e->frame - e->padding) / 4;
 			for (r=arm64_rclob; *r>=0; r++)
@@ -517,7 +578,7 @@ arm64_emitfn(Fn *fn, FILE *out)
 			if (e->fn->dynalloc)
 				fputs("\tmov sp, x29\n", e->f);
 			o = e->frame + 16;
-			if (e->fn->vararg)
+			if (e->fn->vararg && !T.apple)
 				o += 192;
 			if (o <= 504)
 				fprintf(e->f,
@@ -550,7 +611,10 @@ arm64_emitfn(Fn *fn, FILE *out)
 		case Jjmp:
 		Jmp:
 			if (b->s1 != b->link)
-				fprintf(e->f, "\tb\t.L%d\n", id0+b->s1->id);
+				fprintf(e->f,
+					"\tb\t%s%d\n",
+					T.asloc, id0+b->s1->id
+				);
 			else
 				lbl = 0;
 			break;
@@ -564,7 +628,10 @@ arm64_emitfn(Fn *fn, FILE *out)
 				b->s2 = t;
 			} else
 				c = cmpneg(c);
-			fprintf(e->f, "\tb%s\t.L%d\n", ctoa[c], id0+b->s2->id);
+			fprintf(e->f,
+				"\tb%s\t%s%d\n",
+				ctoa[c], T.asloc, id0+b->s2->id
+			);
 			goto Jmp;
 		}
 	}

@@ -44,9 +44,12 @@ Target T_rv64 = {
 	.retregs = rv64_retregs,
 	.argregs = rv64_argregs,
 	.memargs = rv64_memargs,
-	.abi = rv64_abi,
+	.abi0 = elimsb,
+	.abi1 = rv64_abi,
 	.isel = rv64_isel,
 	.emitfn = rv64_emitfn,
+	.emitfin = elf_emitfin,
+	.asloc = ".L",
 };
 
 MAKESURE(rsave_size_ok, sizeof rv64_rsave == (NGPS+NFPS+1) * sizeof(int));

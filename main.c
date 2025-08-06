@@ -19,12 +19,16 @@ char debug['Z'+1] = {
 };
 
 extern Target T_amd64_sysv;
+extern Target T_amd64_apple;
 extern Target T_arm64;
+extern Target T_arm64_apple;
 extern Target T_rv64;
 
 static Target *tlist[] = {
 	&T_amd64_sysv,
+	&T_amd64_apple,
 	&T_arm64,
+	&T_arm64_apple,
 	&T_rv64,
 	0
 };
@@ -36,11 +40,11 @@ data(Dat *d)
 {
 	if (dbg)
 		return;
+	emitdat(d, outf);
 	if (d->type == DEnd) {
 		fputs("/* end data */\n\n", outf);
 		freeall();
 	}
-	gasemitdat(d, outf);
 }
 
 static void
@@ -54,10 +58,11 @@ func(Fn *fn)
 		fprintf(stderr, "\n> After parsing:\n");
 		printfn(fn, stderr);
 	}
+	T.abi0(fn);
 	fillrpo(fn);
 	fillpreds(fn);
 	filluse(fn);
-	memopt(fn);
+	promote(fn);
 	filluse(fn);
 	ssa(fn);
 	filluse(fn);
@@ -65,11 +70,15 @@ func(Fn *fn)
 	fillalias(fn);
 	loadopt(fn);
 	filluse(fn);
+	fillalias(fn);
+	coalesce(fn);
+	filluse(fn);
 	ssacheck(fn);
 	copy(fn);
 	filluse(fn);
 	fold(fn);
-	T.abi(fn);
+	T.abi1(fn);
+	simpl(fn);
 	fillpreds(fn);
 	filluse(fn);
 	T.isel(fn);
@@ -92,7 +101,6 @@ func(Fn *fn)
 			fn->rpo[n]->link = fn->rpo[n+1];
 	if (!dbg) {
 		T.emitfn(fn, outf);
-		gasemitfntail(fn->name, outf);
 		fprintf(outf, "/* end function %s */\n\n", fn->name);
 	} else
 		fprintf(stderr, "\n");
@@ -105,12 +113,11 @@ main(int ac, char *av[])
 	Target **t;
 	FILE *inf, *hf;
 	char *f, *sep;
-	int c, asmmode;
+	int c;
 
-	asmmode = Defasm;
 	T = Deftgt;
 	outf = stdout;
-	while ((c = getopt(ac, av, "hd:o:G:t:")) != -1)
+	while ((c = getopt(ac, av, "hd:o:t:")) != -1)
 		switch (c) {
 		case 'd':
 			for (; *optarg; optarg++)
@@ -144,16 +151,6 @@ main(int ac, char *av[])
 				}
 			}
 			break;
-		case 'G':
-			if (strcmp(optarg, "e") == 0)
-				asmmode = Gaself;
-			else if (strcmp(optarg, "m") == 0)
-				asmmode = Gasmacho;
-			else {
-				fprintf(stderr, "unknown gas flavor '%s'\n", optarg);
-				exit(1);
-			}
-			break;
 		case 'h':
 		default:
 			hf = c != 'h' ? stderr : stdout;
@@ -162,15 +159,15 @@ main(int ac, char *av[])
 			fprintf(hf, "\t%-11s output to file\n", "-o file");
 			fprintf(hf, "\t%-11s generate for a target among:\n", "-t <target>");
 			fprintf(hf, "\t%-11s ", "");
-			for (t=tlist, sep=""; *t; t++, sep=", ")
+			for (t=tlist, sep=""; *t; t++, sep=", ") {
 				fprintf(hf, "%s%s", sep, (*t)->name);
+				if (*t == &Deftgt)
+					fputs(" (default)", hf);
+			}
 			fprintf(hf, "\n");
-			fprintf(hf, "\t%-11s generate gas (e) or osx (m) asm\n", "-G {e,m}");
 			fprintf(hf, "\t%-11s dump debug information\n", "-d <flags>");
 			exit(c != 'h');
 		}
-
-	gasinit(asmmode);
 
 	do {
 		f = av[optind];
@@ -189,7 +186,7 @@ main(int ac, char *av[])
 	} while (++optind < ac);
 
 	if (!dbg)
-		gasemitfin(outf);
+		T.emitfin(outf);
 
 	exit(0);
 }

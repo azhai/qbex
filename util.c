@@ -116,7 +116,7 @@ vnew(ulong len, size_t esz, Pool pool)
 
 	for (cap=VMin; cap<len; cap*=2)
 		;
-	f = pool == Pheap ? emalloc : alloc;
+	f = pool == PHeap ? emalloc : alloc;
 	v = f(cap * esz + sizeof(Vec));
 	v->mag = VMag;
 	v->cap = cap;
@@ -132,7 +132,7 @@ vfree(void *p)
 
 	v = (Vec *)p - 1;
 	assert(v->mag == VMag);
-	if (v->pool == Pheap) {
+	if (v->pool == PHeap) {
 		v->mag = 0;
 		free(v);
 	}
@@ -172,7 +172,7 @@ intern(char *s)
 	if (n == 1<<(32-IBits))
 		die("interning table overflow");
 	if (n == 0)
-		b->str = vnew(1, sizeof b->str[0], Pheap);
+		b->str = vnew(1, sizeof b->str[0], PHeap);
 	else if ((n & (n-1)) == 0)
 		vgrow(&b->str, n+n);
 
@@ -349,18 +349,23 @@ chuse(Ref r, int du, Fn *fn)
 		fn->tmp[r.val].nuse += du;
 }
 
+int
+symeq(Sym s0, Sym s1)
+{
+	return s0.type == s1.type && s0.id == s1.id;
+}
+
 Ref
 newcon(Con *c0, Fn *fn)
 {
 	Con *c1;
 	int i;
 
-	for (i=0; i<fn->ncon; i++) {
+	for (i=1; i<fn->ncon; i++) {
 		c1 = &fn->con[i];
 		if (c0->type == c1->type
-		&& c0->bits.i == c1->bits.i
-		&& c0->label == c1->label
-		&& c0->local == c1->local)
+		&& symeq(c0->sym, c1->sym)
+		&& c0->bits.i == c1->bits.i)
 			return CON(i);
 	}
 	vgrow(&fn->con, ++fn->ncon);
@@ -373,8 +378,9 @@ getcon(int64_t val, Fn *fn)
 {
 	int c;
 
-	for (c=0; c<fn->ncon; c++)
-		if (fn->con[c].type == CBits && fn->con[c].bits.i == val)
+	for (c=1; c<fn->ncon; c++)
+		if (fn->con[c].type == CBits
+		&& fn->con[c].bits.i == val)
 			return CON(c);
 	vgrow(&fn->con, ++fn->ncon);
 	fn->con[c] = (Con){.type = CBits, .bits.i = val};
@@ -391,41 +397,11 @@ addcon(Con *c0, Con *c1)
 			if (c0->type == CAddr)
 				return 0;
 			c0->type = CAddr;
-			c0->label = c1->label;
+			c0->sym = c1->sym;
 		}
 		c0->bits.i += c1->bits.i;
 	}
 	return 1;
-}
-
-void
-blit(Ref rdst, uint doff, Ref rsrc, uint boff, uint sz, Fn *fn)
-{
-	struct { int st, ld, cls, size; } *p, tbl[] = {
-		{ Ostorel, Oload,   Kl, 8 },
-		{ Ostorew, Oload,   Kw, 4 },
-		{ Ostoreh, Oloaduh, Kw, 2 },
-		{ Ostoreb, Oloadub, Kw, 1 }
-	};
-	Ref r, r1;
-	uint s;
-
-	for (p=tbl; sz; p++)
-		for (s=p->size; sz>=s; sz-=s, doff+=s, boff+=s) {
-			r = newtmp("blt", Kl, fn);
-			r1 = newtmp("blt", Kl, fn);
-			emit(p->st, 0, R, r, r1);
-			emit(Oadd, Kl, r1, rdst, getcon(doff, fn));
-			r1 = newtmp("blt", Kl, fn);
-			emit(p->ld, p->cls, r, r1, R);
-			emit(Oadd, Kl, r1, rsrc, getcon(boff, fn));
-		}
-}
-
-void
-blit0(Ref rdst, Ref rsrc, uint sz, Fn *fn)
-{
-	blit(rdst, 0, rsrc, 0, sz, fn);
 }
 
 void

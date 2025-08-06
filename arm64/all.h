@@ -28,6 +28,7 @@ extern int arm64_rclob[];
 bits arm64_retregs(Ref, int[2]);
 bits arm64_argregs(Ref, int[2]);
 void arm64_abi(Fn *);
+void apple_extsb(Fn *);
 
 /* isel.c */
 int arm64_logimm(uint64_t, int);

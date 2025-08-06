@@ -63,7 +63,8 @@ fixarg(Ref *r, int k, Ins *i, Fn *fn)
 {
 	char buf[32];
 	Addr a, *m;
-	Ref r0, r1;
+	Con cc, *c;
+	Ref r0, r1, r2, r3;
 	int s, n, op;
 
 	r1 = r0 = *r;
@@ -78,10 +79,9 @@ fixarg(Ref *r, int k, Ins *i, Fn *fn)
 		vgrow(&fn->mem, ++fn->nmem);
 		memset(&a, 0, sizeof a);
 		a.offset.type = CAddr;
-		a.offset.local = 1;
-		n = gasstash(&fn->con[r0.val].bits, KWIDE(k) ? 8 : 4);
-		sprintf(buf, "fp%d", n);
-		a.offset.label = intern(buf);
+		n = stashbits(&fn->con[r0.val].bits, KWIDE(k) ? 8 : 4);
+		sprintf(buf, "\"%sfp%d\"", T.asloc, n);
+		a.offset.sym.id = intern(buf);
 		fn->mem[fn->nmem-1] = a;
 	}
 	else if (op != Ocopy && k == Kl && noimm(r0, fn)) {
@@ -122,6 +122,28 @@ fixarg(Ref *r, int k, Ins *i, Fn *fn)
 			m->offset.type = CUndef;
 			m->base = r0;
 		}
+	} else if (T.apple && rtype(r0) == RCon
+	&& (c = &fn->con[r0.val])->type == CAddr
+	&& c->sym.type == SThr) {
+		r1 = newtmp("isel", Kl, fn);
+		if (c->bits.i) {
+			r2 = newtmp("isel", Kl, fn);
+			cc = (Con){.type = CBits};
+			cc.bits.i = c->bits.i;
+			r3 = newcon(&cc, fn);
+			emit(Oadd, Kl, r1, r2, r3);
+		} else
+			r2 = r1;
+		emit(Ocopy, Kl, r2, TMP(RAX), R);
+		r2 = newtmp("isel", Kl, fn);
+		r3 = newtmp("isel", Kl, fn);
+		emit(Ocall, 0, R, r3, CALL(17));
+		emit(Ocopy, Kl, TMP(RDI), r2, R);
+		emit(Oload, Kl, r3, r2, R);
+		cc = *c;
+		cc.bits.i = 0;
+		r3 = newcon(&cc, fn);
+		emit(Oload, Kl, r2, r3, R);
 	}
 	*r = r1;
 }
@@ -443,7 +465,9 @@ seljmp(Blk *b, Fn *fn)
 	Ins *fi;
 	Tmp *t;
 
-	if (b->jmp.type == Jret0 || b->jmp.type == Jjmp)
+	if (b->jmp.type == Jret0
+	|| b->jmp.type == Jjmp
+	|| b->jmp.type == Jhlt)
 		return;
 	assert(b->jmp.type == Jjnz);
 	r = b->jmp.arg;
@@ -458,7 +482,7 @@ seljmp(Blk *b, Fn *fn)
 	}
 	fi = flagi(b->ins, &b->ins[b->nins]);
 	if (!fi || !req(fi->to, r)) {
-		selcmp((Ref[2]){r, CON_Z}, Kw, 0, fn); /* todo, long jnz */
+		selcmp((Ref[2]){r, CON_Z}, Kw, 0, fn);
 		b->jmp.type = Jjf + Cine;
 	}
 	else if (iscmp(fi->op, &k, &c)
@@ -590,7 +614,8 @@ amatch(Addr *a, Ref r, int n, ANum *ai, Fn *fn)
 	if (rtype(r) == RCon) {
 		if (!addcon(&a->offset, &fn->con[r.val]))
 			err("unlikely sum of $%s and $%s",
-				str(a->offset.label), str(fn->con[r.val].label));
+				str(a->offset.sym.id),
+				str(fn->con[r.val].sym.id));
 		return 1;
 	}
 	assert(rtype(r) == RTmp);

@@ -25,22 +25,38 @@ arm64_memargs(int op)
 	return 0;
 }
 
+#define ARM64_COMMON \
+	.gpr0 = R0, \
+	.ngpr = NGPR, \
+	.fpr0 = V0, \
+	.nfpr = NFPR, \
+	.rglob = RGLOB, \
+	.nrglob = 3, \
+	.rsave = arm64_rsave, \
+	.nrsave = {NGPS, NFPS}, \
+	.retregs = arm64_retregs, \
+	.argregs = arm64_argregs, \
+	.memargs = arm64_memargs, \
+	.isel = arm64_isel, \
+	.abi1 = arm64_abi, \
+	.emitfn = arm64_emitfn, \
+
 Target T_arm64 = {
 	.name = "arm64",
-	.gpr0 = R0,
-	.ngpr = NGPR,
-	.fpr0 = V0,
-	.nfpr = NFPR,
-	.rglob = RGLOB,
-	.nrglob = 3,
-	.rsave = arm64_rsave,
-	.nrsave = {NGPS, NFPS},
-	.retregs = arm64_retregs,
-	.argregs = arm64_argregs,
-	.memargs = arm64_memargs,
-	.abi = arm64_abi,
-	.isel = arm64_isel,
-	.emitfn = arm64_emitfn,
+	.abi0 = elimsb,
+	.emitfin = elf_emitfin,
+	.asloc = ".L",
+	ARM64_COMMON
+};
+
+Target T_arm64_apple = {
+	.name = "arm64_apple",
+	.apple = 1,
+	.abi0 = apple_extsb,
+	.emitfin = macho_emitfin,
+	.asloc = "L",
+	.assym = "_",
+	ARM64_COMMON
 };
 
 MAKESURE(globals_are_not_arguments,

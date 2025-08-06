@@ -70,16 +70,16 @@ init() {
 	"")
 		case `uname` in
 		*Darwin*)
-			cc="cc -Wl,-no_pie"
-			;;
-		*OpenBSD*)
-			cc="cc -nopie"
-			;;
-		*FreeBSD*)
 			cc="cc"
 			;;
+		*OpenBSD*)
+			cc="cc -nopie -lpthread"
+			;;
+		*FreeBSD*)
+			cc="cc -lpthread"
+			;;
 		*)
-			cc="${CC:-cc} -no-pie"
+			cc="${CC:-cc} -lpthread"
 			testcc "$cc" || cc="${CC:-cc}"
 			;;
 		esac
