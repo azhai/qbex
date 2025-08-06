@@ -239,6 +239,8 @@ pmrec(enum PMStat *status, int i, int *k)
 		c = -1;
 		emit(Ocopy, pm[i].cls, pm[i].dst, pm[i].src, R);
 		break;
+	default:
+		die("unreachable");
 	}
 	status[i] = Moved;
 	return c;
@@ -663,12 +665,12 @@ rega(Fn *fn)
 			pmgen();
 			if (curi == &insb[NIns])
 				continue;
-			b1 = blknew();
+			b1 = newblk();
 			b1->loop = (b->loop+s->loop) / 2;
 			b1->link = blist;
 			blist = b1;
 			fn->nblk++;
-			(void)!snprintf(b1->name, sizeof(b1->name), "%s_%s", b->name, s->name);
+			strf(b1->name, "%s_%s", b->name, s->name);
 			b1->nins = &insb[NIns] - curi;
 			stmov += b1->nins;
 			stblk += 1;

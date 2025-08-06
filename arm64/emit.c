@@ -446,6 +446,9 @@ emitins(Ins *i, E *e)
 		if (!req(i->to, R))
 			emitf("mov %=, sp", i, e);
 		break;
+	case Odbgloc:
+		emitdbgloc(i->arg[0].val, i->arg[1].val, e->f);
+		break;
 	}
 }
 
@@ -636,4 +639,6 @@ arm64_emitfn(Fn *fn, FILE *out)
 		}
 	}
 	id0 += e->fn->nblk;
+	if (!T.apple)
+		elf_emitfnfin(fn->name, out);
 }

@@ -154,6 +154,16 @@ vgrow(void *vp, ulong len)
 	*(Vec **)vp = v1;
 }
 
+void
+strf(char str[NString], char *s, ...)
+{
+	va_list ap;
+
+	va_start(ap, s);
+	vsnprintf(str, NString, s, ap);
+	va_end(ap);
+}
+
 uint32_t
 intern(char *s)
 {
@@ -334,7 +344,7 @@ newtmp(char *prfx, int k,  Fn *fn)
 	vgrow(&fn->tmp, fn->ntmp);
 	memset(&fn->tmp[t], 0, sizeof(Tmp));
 	if (prfx)
-		sprintf(fn->tmp[t].name, "%s.%d", prfx, ++n);
+		strf(fn->tmp[t].name, "%s.%d", prfx, ++n);
 	fn->tmp[t].cls = k;
 	fn->tmp[t].slot = -1;
 	fn->tmp[t].nuse = +1;

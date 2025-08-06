@@ -405,6 +405,9 @@ emitins(Ins *i, Fn *fn, FILE *f)
 		if (!req(i->to, R))
 			emitf("mv %=, sp", i, fn, f);
 		break;
+	case Odbgloc:
+		emitdbgloc(i->arg[0].val, i->arg[1].val, f);
+		break;
 	}
 }
 
@@ -557,4 +560,5 @@ rv64_emitfn(Fn *fn, FILE *f)
 		}
 	}
 	id0 += fn->nblk;
+	elf_emitfnfin(fn->name, f);
 }

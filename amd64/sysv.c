@@ -507,12 +507,12 @@ split(Fn *fn, Blk *b)
 	Blk *bn;
 
 	++fn->nblk;
-	bn = blknew();
+	bn = newblk();
 	bn->nins = &insb[NIns] - curi;
 	idup(&bn->ins, curi, bn->nins);
 	curi = &insb[NIns];
 	bn->visit = ++b->visit;
-	(void)!snprintf(bn->name, NString, "%s.%d", b->name, b->visit);
+	strf(bn->name, "%s.%d", b->name, b->visit);
 	bn->loop = b->loop;
 	bn->link = b->link;
 	b->link = bn;

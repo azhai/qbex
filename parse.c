@@ -53,6 +53,7 @@ enum Token {
 	Tdata,
 	Tsection,
 	Talign,
+	Tdbgfile,
 	Tl,
 	Tw,
 	Tsh,
@@ -110,6 +111,7 @@ static char *kwmap[Ntok] = {
 	[Tdata] = "data",
 	[Tsection] = "section",
 	[Talign] = "align",
+	[Tdbgfile] = "dbgfile",
 	[Tsb] = "sb",
 	[Tub] = "ub",
 	[Tsh] = "sh",
@@ -555,7 +557,7 @@ findblk(char *name)
 	for (b=blkh[h]; b; b=b->dlink)
 		if (strcmp(b->name, name) == 0)
 			return b;
-	b = blknew();
+	b = newblk();
 	b->id = nblk++;
 	strcpy(b->name, name);
 	b->dlink = blkh[h];
@@ -587,6 +589,12 @@ parseline(PState ps)
 	if (ps == PLbl && t != Tlbl && t != Trbrace)
 		err("label or } expected");
 	switch (t) {
+	case Ttmp:
+		r = tmpref(tokval.str);
+		expect(Teq);
+		k = parsecls(&ty);
+		op = next();
+		break;
 	default:
 		if (isstore(t)) {
 		case Tblit:
@@ -596,13 +604,11 @@ parseline(PState ps)
 			r = R;
 			k = Kw;
 			op = t;
-			goto DoOp;
+			break;
 		}
 		err("label, instruction or jump expected");
 	case Trbrace:
 		return PEnd;
-	case Ttmp:
-		break;
 	case Tlbl:
 		b = findblk(tokval.str);
 		if (curb && curb->jmp.type == Jxxx) {
@@ -655,12 +661,24 @@ parseline(PState ps)
 		expect(Tnl);
 		closeblk();
 		return PLbl;
+	case Odbgloc:
+		op = t;
+		k = Kw;
+		r = R;
+		expect(Tint);
+		arg[0] = INT(tokval.num);
+		if (arg[0].val != tokval.num)
+			err("line number too big");
+		if (peek() == Tcomma) {
+			next();
+			expect(Tint);
+			arg[1] = INT(tokval.num);
+			if (arg[1].val != tokval.num)
+				err("column number too big");
+		} else
+			arg[1] = INT(0);
+		goto Ins;
 	}
-	r = tmpref(tokval.str);
-	expect(Teq);
-	k = parsecls(&ty);
-	op = next();
-DoOp:
 	if (op == Tcall) {
 		arg[0] = parseref();
 		parserefl(1);
@@ -669,8 +687,7 @@ DoOp:
 		if (k == Kc) {
 			k = Kl;
 			arg[1] = TYPE(ty);
-		} else
-			arg[1] = R;
+		}
 		if (k >= Ksb)
 			k = Kw;
 		goto Ins;
@@ -1160,7 +1177,7 @@ parselnk(Lnk *lnk)
 }
 
 void
-parse(FILE *f, char *path, void data(Dat *), void func(Fn *))
+parse(FILE *f, char *path, void dbgfile(char *), void data(Dat *), void func(Fn *))
 {
 	Lnk lnk;
 	uint n;
@@ -1177,6 +1194,10 @@ parse(FILE *f, char *path, void data(Dat *), void func(Fn *))
 		switch (parselnk(&lnk)) {
 		default:
 			err("top-level definition expected");
+		case Tdbgfile:
+			expect(Tstr);
+			dbgfile(tokval.str);
+			break;
 		case Tfunc:
 			func(parsefn(&lnk));
 			break;
@@ -1203,6 +1224,8 @@ printcon(Con *c, FILE *f)
 	case CUndef:
 		break;
 	case CAddr:
+		if (c->sym.type == SThr)
+			fprintf(f, "thread ");
 		fprintf(f, "$%s", str(c->sym.id));
 		if (c->bits.i)
 			fprintf(f, "%+"PRIi64, c->bits.i);

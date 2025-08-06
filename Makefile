@@ -13,7 +13,8 @@ OBJ      = $(COMMOBJ) $(AMD64OBJ) $(ARM64OBJ) $(RV64OBJ)
 
 SRCALL   = $(OBJ:.o=.c)
 
-CFLAGS = $(CPPFLAGS) -Wall -Wextra -std=c99 -g -Wpedantic
+CC       = cc
+CFLAGS   = -std=c99 -g -Wall -Wextra -Wpedantic
 
 qbe: $(OBJ)
 	$(CC) $(LDFLAGS) $(OBJ) -o $@
@@ -41,7 +42,7 @@ config.h:
 		;;                                     \
 	*)                                             \
 		case `uname -m` in                     \
-		*aarch64*)                             \
+		*aarch64*|*arm64*)                     \
 			echo "#define Deftgt T_arm64"; \
 			;;                             \
 		*riscv64*)                             \

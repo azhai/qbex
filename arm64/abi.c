@@ -446,6 +446,7 @@ selcall(Fn *fn, Ins *i0, Ins *i1, Insl **ilp)
 			case 2: op = Ostoreh; break;
 			case 4:
 			case 8: op = store[*c->cls]; break;
+			default: die("unreachable");
 			}
 			emit(op, 0, R, i->arg[0], r);
 		} else {
@@ -541,12 +542,12 @@ split(Fn *fn, Blk *b)
 	Blk *bn;
 
 	++fn->nblk;
-	bn = blknew();
+	bn = newblk();
 	bn->nins = &insb[NIns] - curi;
 	idup(&bn->ins, curi, bn->nins);
 	curi = &insb[NIns];
 	bn->visit = ++b->visit;
-	(void)!snprintf(bn->name, NString, "%s.%d", b->name, b->visit);
+	strf(bn->name, "%s.%d", b->name, b->visit);
 	bn->loop = b->loop;
 	bn->link = b->link;
 	b->link = bn;
@@ -799,8 +800,8 @@ arm64_abi(Fn *fn)
 }
 
 /* abi0 for apple target; introduces
- * necessery sign extension for arg
- * passing & returns
+ * necessary sign extensions in calls
+ * and returns
  */
 void
 apple_extsb(Fn *fn)
@@ -818,6 +819,7 @@ apple_extsb(Fn *fn)
 			op = Oextsb + (j - Jretsb);
 			emit(op, Kw, r, b->jmp.arg, R);
 			b->jmp.arg = r;
+			b->jmp.type = Jretw;
 		}
 		for (i=&b->ins[b->nins]; i>b->ins;) {
 			emiti(*--i);
@@ -844,7 +846,7 @@ apple_extsb(Fn *fn)
 	}
 
 	if (debug['A']) {
-		fprintf(stderr, "\n> After apple_extsb:\n");
+		fprintf(stderr, "\n> After Apple pre-ABI:\n");
 		printfn(fn, stderr);
 	}
 }

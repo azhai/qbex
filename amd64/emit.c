@@ -372,6 +372,8 @@ emitins(Ins i, Fn *fn, FILE *f)
 	int64_t val;
 	int o, t0;
 	Ins ineg;
+	Con *con;
+	char *sym;
 
 	switch (i.op) {
 	default:
@@ -490,6 +492,26 @@ emitins(Ins i, Fn *fn, FILE *f)
 		 * should use movabsq when reading movq */
 		emitf("mov%k %0, %=", &i, fn, f);
 		break;
+	case Oaddr:
+		if (!T.apple
+		&& rtype(i.arg[0]) == RCon
+		&& fn->con[i.arg[0].val].sym.type == SThr) {
+			/* derive the symbol address from the TCB
+			 * address at offset 0 of %fs */
+			assert(isreg(i.to));
+			con = &fn->con[i.arg[0].val];
+			sym = str(con->sym.id);
+			emitf("movq %%fs:0, %L=", &i, fn, f);
+			fprintf(f, "\tleaq %s%s@tpoff",
+				sym[0] == '"' ? "" : T.assym, sym);
+			if (con->bits.i)
+				fprintf(f, "%+"PRId64, con->bits.i);
+			fprintf(f, "(%%%s), %%%s\n",
+				regtoa(i.to.val, SLong),
+				regtoa(i.to.val, SLong));
+			break;
+		}
+		goto Table;
 	case Ocall:
 		/* calls simply have a weird syntax in AT&T
 		 * assembly... */
@@ -524,6 +546,9 @@ emitins(Ins i, Fn *fn, FILE *f)
 		emitcopy(TMP(XMM0+15), i.arg[0], i.cls, fn, f);
 		emitcopy(i.arg[0], i.arg[1], i.cls, fn, f);
 		emitcopy(i.arg[1], TMP(XMM0+15), i.cls, fn, f);
+		break;
+	case Odbgloc:
+		emitdbgloc(i.arg[0].val, i.arg[1].val, f);
 		break;
 	}
 }

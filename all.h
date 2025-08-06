@@ -33,7 +33,7 @@ typedef struct Lnk Lnk;
 typedef struct Target Target;
 
 enum {
-	NString = 72,
+	NString = 80,
 	NIns    = 1 << 20,
 	NAlign  = 3,
 	NField  = 32,
@@ -115,7 +115,7 @@ static inline int rtype(Ref r)
 
 static inline int rsval(Ref r)
 {
-	return ((int32_t)r.val << 3) >> 3;
+	return (int32_t)((int64_t)r.val << 3) >> 3;
 }
 
 enum CmpI {
@@ -458,6 +458,7 @@ void freeall(void);
 void *vnew(ulong, size_t, Pool);
 void vfree(void *);
 void vgrow(void *, ulong);
+void strf(char[NString], char *, ...);
 uint32_t intern(char *);
 char *str(uint32_t);
 int argcls(Ins *, int);
@@ -501,7 +502,7 @@ bshas(BSet *bs, uint elt)
 
 /* parse.c */
 extern Op optab[NOp];
-void parse(FILE *, char *, void (Dat *), void (Fn *));
+void parse(FILE *, char *, void (char *), void (Dat *), void (Fn *));
 void printfn(Fn *, FILE *);
 void printref(Ref, Fn *, FILE *);
 void err(char *, ...) __attribute__((noreturn));
@@ -510,7 +511,7 @@ void err(char *, ...) __attribute__((noreturn));
 void elimsb(Fn *);
 
 /* cfg.c */
-Blk *blknew(void);
+Blk *newblk(void);
 void edgedel(Blk *, Blk **);
 void fillpreds(Fn *);
 void fillrpo(Fn *);
@@ -567,6 +568,8 @@ void rega(Fn *);
 /* emit.c */
 void emitfnlnk(char *, Lnk *, FILE *);
 void emitdat(Dat *, FILE *);
+void emitdbgfile(char *, FILE *);
+void emitdbgloc(uint, uint, FILE *);
 int stashbits(void *, int);
 void elf_emitfnfin(char *, FILE *);
 void elf_emitfin(FILE *);

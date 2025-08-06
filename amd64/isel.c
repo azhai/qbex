@@ -58,6 +58,21 @@ rslot(Ref r, Fn *fn)
 	return fn->tmp[r.val].slot;
 }
 
+static int
+hascon(Ref r, Con **pc, Fn *fn)
+{
+	switch (rtype(r)) {
+	case RCon:
+		*pc = &fn->con[r.val];
+		return 1;
+	case RMem:
+		*pc = &fn->mem[r.val].offset;
+		return 1;
+	default:
+		return 0;
+	}
+}
+
 static void
 fixarg(Ref *r, int k, Ins *i, Fn *fn)
 {
@@ -100,6 +115,34 @@ fixarg(Ref *r, int k, Ins *i, Fn *fn)
 		r1 = newtmp("isel", Kl, fn);
 		emit(Oaddr, Kl, r1, SLOT(s), R);
 	}
+	else if (T.apple && hascon(r0, &c, fn)
+	&& c->type == CAddr && c->sym.type == SThr) {
+		r1 = newtmp("isel", Kl, fn);
+		if (c->bits.i) {
+			r2 = newtmp("isel", Kl, fn);
+			cc = (Con){.type = CBits};
+			cc.bits.i = c->bits.i;
+			r3 = newcon(&cc, fn);
+			emit(Oadd, Kl, r1, r2, r3);
+		} else
+			r2 = r1;
+		emit(Ocopy, Kl, r2, TMP(RAX), R);
+		r2 = newtmp("isel", Kl, fn);
+		r3 = newtmp("isel", Kl, fn);
+		emit(Ocall, 0, R, r3, CALL(17));
+		emit(Ocopy, Kl, TMP(RDI), r2, R);
+		emit(Oload, Kl, r3, r2, R);
+		cc = *c;
+		cc.bits.i = 0;
+		r3 = newcon(&cc, fn);
+		emit(Oload, Kl, r2, r3, R);
+		if (rtype(r0) == RMem) {
+			m = &fn->mem[r0.val];
+			m->offset.type = CUndef;
+			m->base = r1;
+			r1 = r0;
+		}
+	}
 	else if (!(isstore(op) && r == &i->arg[1])
 	&& !isload(op) && op != Ocall && rtype(r0) == RCon
 	&& fn->con[r0.val].type == CAddr) {
@@ -122,28 +165,6 @@ fixarg(Ref *r, int k, Ins *i, Fn *fn)
 			m->offset.type = CUndef;
 			m->base = r0;
 		}
-	} else if (T.apple && rtype(r0) == RCon
-	&& (c = &fn->con[r0.val])->type == CAddr
-	&& c->sym.type == SThr) {
-		r1 = newtmp("isel", Kl, fn);
-		if (c->bits.i) {
-			r2 = newtmp("isel", Kl, fn);
-			cc = (Con){.type = CBits};
-			cc.bits.i = c->bits.i;
-			r3 = newcon(&cc, fn);
-			emit(Oadd, Kl, r1, r2, r3);
-		} else
-			r2 = r1;
-		emit(Ocopy, Kl, r2, TMP(RAX), R);
-		r2 = newtmp("isel", Kl, fn);
-		r3 = newtmp("isel", Kl, fn);
-		emit(Ocall, 0, R, r3, CALL(17));
-		emit(Ocopy, Kl, TMP(RDI), r2, R);
-		emit(Oload, Kl, r3, r2, R);
-		cc = *c;
-		cc.bits.i = 0;
-		r3 = newcon(&cc, fn);
-		emit(Oload, Kl, r2, r3, R);
 	}
 	*r = r1;
 }
@@ -295,15 +316,15 @@ sel(Ins i, ANum *an, Fn *fn)
 		break;
 	case Oultof:
 		/* %mask =l and %arg.0, 1
-		   %isbig =l shr %arg.0, 63
-		   %divided =l shr %arg.0, %isbig
-		   %or =l or %mask, %divided
-		   %float =d sltof %or
-		   %cast =l cast %float
-		   %addend =l shl %isbig, 52
-		   %sum =l add %cast, %addend
-		   %result =d cast %sum
-		*/
+		 * %isbig =l shr %arg.0, 63
+		 * %divided =l shr %arg.0, %isbig
+		 * %or =l or %mask, %divided
+		 * %float =d sltof %or
+		 * %cast =l cast %float
+		 * %addend =l shl %isbig, 52
+		 * %sum =l add %cast, %addend
+		 * %result =d cast %sum
+		 */
 		r0 = newtmp("utof", k, fn);
 		if (k == Ks)
 			kc = Kw, sh = 23;
@@ -336,8 +357,25 @@ sel(Ins i, ANum *an, Fn *fn)
 		kc = Kd;
 		tmp[4] = getcon(0xc3e0000000000000, fn);
 	Oftoui:
-		if (k == Kw)
+		if (k == Kw) {
+			r0 = newtmp("ftou", Kl, fn);
+			emit(Ocopy, Kw, i.to, r0, R);
+			i.cls = Kl;
+			i.to = r0;
 			goto Emit;
+		}
+		/* %try0 =l {s,d}tosi %fp
+		 * %mask =l sar %try0, 63
+		 *
+		 *    mask is all ones if the first
+		 *    try was oob, all zeroes o.w.
+		 *
+		 * %fps ={s,d} sub %fp, (1<<63)
+		 * %try1 =l {s,d}tosi %fps
+		 *
+		 * %tmp =l and %mask, %try1
+		 * %res =l or %tmp, %try0
+		 */
 		r0 = newtmp("ftou", kc, fn);
 		for (j=0; j<4; j++)
 			tmp[j] = newtmp("ftou", Kl, fn);
@@ -371,6 +409,7 @@ sel(Ins i, ANum *an, Fn *fn)
 	case_Oload:
 		seladdr(&i.arg[0], an, fn);
 		goto Emit;
+	case Odbgloc:
 	case Ocall:
 	case Osalloc:
 	case Ocopy:
