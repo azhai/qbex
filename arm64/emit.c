@@ -9,7 +9,7 @@ struct E {
   uint padding;
 };
 
-#define OLOAD_TAIL "\n\tstr %=, [sp]"
+#define APPLE_TAIL "\n\tstr %=, [sp]"
 
 #define CMP(X)          \
   X(Cieq, "eq")         \
@@ -111,12 +111,12 @@ static struct {
 static char *rname(int r, int k) {
   static char buf[4];
   int offset = 0;
+  if (T.apple) offset = 8;
 
   if (r == SP) {
     assert(k == Kl);
     sprintf(buf, "sp");
   } else if (R0 <= r && r <= LR) {
-    if (T.apple) offset = 7;
     switch (k) {
       default:
         die("invalid class");
@@ -129,7 +129,6 @@ static char *rname(int r, int k) {
         break;
     }
   } else if (V0 <= r && r <= V30) {
-    if (T.apple) offset = 8;
     switch (k) {
       default:
         die("invalid class");
@@ -326,6 +325,7 @@ static void loadcon(Con *c, int r, int k, E *e) {
       if ((!w && sh == 32) || sh == 64) break;
       fprintf(e->f, "\tmovk\t%s, #0x%x, lsl #%d\n", rn, (uint)(n & 0xffff), sh);
     }
+    if (T.apple) fprintf(e->f, "\tstr\t%s, [sp]\n", rn);
   }
 }
 
@@ -349,7 +349,7 @@ static void fixarg(Ref *pr, int sz, E *e) {
 
 static void emitins(Ins *i, E *e) {
   char *l, *p, *rn;
-  char fmt[30];
+  char fmt[70];
   uint64_t s;
   int o;
   Ref r;
@@ -374,8 +374,12 @@ static void emitins(Ins *i, E *e) {
             break;
       }
       strcpy(fmt, omap[o].fmt);
-      if (T.apple && Oloadsb <= omap[o].op && omap[o].op <= Oload)
-        strcat(fmt, OLOAD_TAIL);
+      if (T.apple) {
+        if (omap[o].op == Ocopy) strcat(fmt, APPLE_TAIL);
+        if (Oadd <= omap[o].op && omap[o].op <= Oshl) strcat(fmt, APPLE_TAIL);
+        if (Oloadsb <= omap[o].op && omap[o].op <= Oload)
+          strcat(fmt, APPLE_TAIL);
+      }
       emitf(fmt, i, e);
       break;
     case Onop:

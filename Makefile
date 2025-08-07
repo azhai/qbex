@@ -96,7 +96,7 @@ src:
 wc:
 	@wc -l $(SRCALL)
 
-format:
+format: src
 	@clang-format -i -style=google $(SRCALL)
 
 .PHONY: clean clean-gen check check-arm64 check-rv64 src 80 wc install uninstall
