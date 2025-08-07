@@ -2,6 +2,7 @@
 ._*
 
 *.bak
+*.dSYM/
 *.log
 *.lock
 *.o
@@ -16,6 +17,8 @@
 .vscode/
 bin/*
 config.h
+minic/minic
 minic/minicf
+minic/y.*
 minic/yacc
 qbe

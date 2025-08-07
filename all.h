@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MAKESURE(what, x) typedef char make_sure_##what[(x) ? 1 : -1]
+#define MAKESURE(what, x) typedef char make_sure_##what[(x)?1:-1]
 #define die(...) die_(__FILE__, __VA_ARGS__)
 
 typedef unsigned char uchar;
@@ -34,162 +34,158 @@ typedef struct Lnk Lnk;
 typedef struct Target Target;
 
 enum {
-  NString = 80,
-  NIns = 1 << 20,
-  NAlign = 3,
-  NField = 32,
-  NBit = CHAR_BIT * sizeof(bits),
+	NString = 80,
+	NIns    = 1 << 20,
+	NAlign  = 3,
+	NField  = 32,
+	NBit    = CHAR_BIT * sizeof(bits),
 };
 
 struct Target {
-  char name[16];
-  char apple;
-  int gpr0; /* first general purpose reg */
-  int ngpr;
-  int fpr0; /* first floating point reg */
-  int nfpr;
-  bits rglob; /* globally live regs (e.g., sp, fp) */
-  int nrglob;
-  int *rsave; /* caller-save */
-  int nrsave[2];
-  bits (*retregs)(Ref, int[2]);
-  bits (*argregs)(Ref, int[2]);
-  int (*memargs)(int);
-  void (*abi0)(Fn *);
-  void (*abi1)(Fn *);
-  void (*isel)(Fn *);
-  void (*emitfn)(Fn *, FILE *);
-  void (*emitfin)(FILE *);
-  char asloc[4];
-  char assym[4];
+	char name[16];
+	char apple;
+	int gpr0;   /* first general purpose reg */
+	int ngpr;
+	int fpr0;   /* first floating point reg */
+	int nfpr;
+	bits rglob; /* globally live regs (e.g., sp, fp) */
+	int nrglob;
+	int *rsave; /* caller-save */
+	int nrsave[2];
+	bits (*retregs)(Ref, int[2]);
+	bits (*argregs)(Ref, int[2]);
+	int (*memargs)(int);
+	void (*abi0)(Fn *);
+	void (*abi1)(Fn *);
+	void (*isel)(Fn *);
+	void (*emitfn)(Fn *, FILE *);
+	void (*emitfin)(FILE *);
+	char asloc[4];
+	char assym[4];
 };
 
 #define BIT(n) ((bits)1 << (n))
 
 enum {
-  RXX = 0,
-  Tmp0 = NBit, /* first non-reg temporary */
+	RXX = 0,
+	Tmp0 = NBit, /* first non-reg temporary */
 };
 
 struct BSet {
-  uint nt;
-  bits *t;
+	uint nt;
+	bits *t;
 };
 
 struct Ref {
-  uint type : 3;
-  uint val : 29;
+	uint type:3;
+	uint val:29;
 };
 
 enum {
-  RTmp,
-  RCon,
-  RInt,
-  RType, /* last kind to come out of the parser */
-  RSlot,
-  RCall,
-  RMem,
+	RTmp,
+	RCon,
+	RInt,
+	RType, /* last kind to come out of the parser */
+	RSlot,
+	RCall,
+	RMem,
 };
 
-#define R \
-  (Ref) { RTmp, 0 }
-#define UNDEF \
-  (Ref) { RCon, 0 } /* represents uninitialized data */
-#define CON_Z \
-  (Ref) { RCon, 1 }
-#define TMP(x) \
-  (Ref) { RTmp, x }
-#define CON(x) \
-  (Ref) { RCon, x }
-#define SLOT(x) \
-  (Ref) { RSlot, (x) & 0x1fffffff }
-#define TYPE(x) \
-  (Ref) { RType, x }
-#define CALL(x) \
-  (Ref) { RCall, x }
-#define MEM(x) \
-  (Ref) { RMem, x }
-#define INT(x) \
-  (Ref) { RInt, (x) & 0x1fffffff }
+#define R        (Ref){RTmp, 0}
+#define UNDEF    (Ref){RCon, 0}  /* represents uninitialized data */
+#define CON_Z    (Ref){RCon, 1}
+#define TMP(x)   (Ref){RTmp, x}
+#define CON(x)   (Ref){RCon, x}
+#define SLOT(x)  (Ref){RSlot, (x)&0x1fffffff}
+#define TYPE(x)  (Ref){RType, x}
+#define CALL(x)  (Ref){RCall, x}
+#define MEM(x)   (Ref){RMem, x}
+#define INT(x)   (Ref){RInt, (x)&0x1fffffff}
 
-static inline int req(Ref a, Ref b) {
-  return a.type == b.type && a.val == b.val;
+static inline int req(Ref a, Ref b)
+{
+	return a.type == b.type && a.val == b.val;
 }
 
-static inline int rtype(Ref r) {
-  if (req(r, R)) return -1;
-  return r.type;
+static inline int rtype(Ref r)
+{
+	if (req(r, R))
+		return -1;
+	return r.type;
 }
 
-static inline int rsval(Ref r) {
-  return ((int)r.val ^ 0x10000000) - 0x10000000;
+static inline int rsval(Ref r)
+{
+	return ((int)r.val ^ 0x10000000) - 0x10000000;
 }
 
 enum CmpI {
-  Cieq,
-  Cine,
-  Cisge,
-  Cisgt,
-  Cisle,
-  Cislt,
-  Ciuge,
-  Ciugt,
-  Ciule,
-  Ciult,
-  NCmpI,
+	Cieq,
+	Cine,
+	Cisge,
+	Cisgt,
+	Cisle,
+	Cislt,
+	Ciuge,
+	Ciugt,
+	Ciule,
+	Ciult,
+	NCmpI,
 };
 
 enum CmpF {
-  Cfeq,
-  Cfge,
-  Cfgt,
-  Cfle,
-  Cflt,
-  Cfne,
-  Cfo,
-  Cfuo,
-  NCmpF,
-  NCmp = NCmpI + NCmpF,
+	Cfeq,
+	Cfge,
+	Cfgt,
+	Cfle,
+	Cflt,
+	Cfne,
+	Cfo,
+	Cfuo,
+	NCmpF,
+	NCmp = NCmpI + NCmpF,
 };
 
 enum O {
-  Oxxx,
+	Oxxx,
 #define O(op, x, y) O##op,
-#include "ops.h"
-  NOp,
+	#include "ops.h"
+	NOp,
 };
 
 enum J {
-  Jxxx,
-#define JMPS(X)                                                              \
-  X(retw)                                                                    \
-  X(retl)                                                                    \
-  X(rets) X(retd) X(retsb) X(retub) X(retsh) X(retuh) X(retc) X(ret0) X(jmp) \
-      X(jnz) X(jfieq) X(jfine) X(jfisge) X(jfisgt) X(jfisle) X(jfislt)       \
-          X(jfiuge) X(jfiugt) X(jfiule) X(jfiult) X(jffeq) X(jffge) X(jffgt) \
-              X(jffle) X(jfflt) X(jffne) X(jffo) X(jffuo) X(hlt)
+	Jxxx,
+#define JMPS(X)                                 \
+	X(retw)   X(retl)   X(rets)   X(retd)   \
+	X(retsb)  X(retub)  X(retsh)  X(retuh)  \
+	X(retc)   X(ret0)   X(jmp)    X(jnz)    \
+	X(jfieq)  X(jfine)  X(jfisge) X(jfisgt) \
+	X(jfisle) X(jfislt) X(jfiuge) X(jfiugt) \
+	X(jfiule) X(jfiult) X(jffeq)  X(jffge)  \
+	X(jffgt)  X(jffle)  X(jfflt)  X(jffne)  \
+	X(jffo)   X(jffuo)  X(hlt)
 #define X(j) J##j,
-  JMPS(X)
+	JMPS(X)
 #undef X
-      NJmp
+	NJmp
 };
 
 enum {
-  Ocmpw = Oceqw,
-  Ocmpw1 = Ocultw,
-  Ocmpl = Oceql,
-  Ocmpl1 = Ocultl,
-  Ocmps = Oceqs,
-  Ocmps1 = Ocuos,
-  Ocmpd = Oceqd,
-  Ocmpd1 = Ocuod,
-  Oalloc = Oalloc4,
-  Oalloc1 = Oalloc16,
-  Oflag = Oflagieq,
-  Oflag1 = Oflagfuo,
-  NPubOp = Onop,
-  Jjf = Jjfieq,
-  Jjf1 = Jjffuo,
+	Ocmpw = Oceqw,
+	Ocmpw1 = Ocultw,
+	Ocmpl = Oceql,
+	Ocmpl1 = Ocultl,
+	Ocmps = Oceqs,
+	Ocmps1 = Ocuos,
+	Ocmpd = Oceqd,
+	Ocmpd1 = Ocuod,
+	Oalloc = Oalloc4,
+	Oalloc1 = Oalloc16,
+	Oflag = Oflagieq,
+	Oflag1 = Oflagfuo,
+	NPubOp = Onop,
+	Jjf = Jjfieq,
+	Jjf1 = Jjffuo,
 };
 
 #define INRANGE(x, l, u) ((unsigned)(x) - l <= u - l) /* linear in x */
@@ -205,262 +201,274 @@ enum {
 #define isretbh(j) INRANGE(j, Jretsb, Jretuh)
 
 enum {
-  Kx = -1, /* "top" class (see usecheck() and clsmerge()) */
-  Kw,
-  Kl,
-  Ks,
-  Kd
+	Kx = -1, /* "top" class (see usecheck() and clsmerge()) */
+	Kw,
+	Kl,
+	Ks,
+	Kd
 };
 
-#define KWIDE(k) ((k) & 1)
-#define KBASE(k) ((k) >> 1)
+#define KWIDE(k) ((k)&1)
+#define KBASE(k) ((k)>>1)
 
 struct Op {
-  char *name;
-  short argcls[2][4];
-  uint canfold : 1;
-  uint hasid : 1;     /* op identity value? */
-  uint idval : 1;     /* identity value 0/1 */
-  uint commutes : 1;  /* commutative op? */
-  uint assoc : 1;     /* associative op? */
-  uint idemp : 1;     /* idempotent op? */
-  uint cmpeqwl : 1;   /* Kl/Kw cmp eq/ne? */
-  uint cmplgtewl : 1; /* Kl/Kw cmp lt/gt/le/ge? */
-  uint eqval : 1;     /* 1 for eq; 0 for ne */
-  uint pinned : 1;    /* GCM pinned op? */
+	char *name;
+	short argcls[2][4];
+	uint canfold:1;
+	uint hasid:1;     /* op identity value? */
+	uint idval:1;     /* identity value 0/1 */
+	uint commutes:1;  /* commutative op? */
+	uint assoc:1;     /* associative op? */
+	uint idemp:1;     /* idempotent op? */
+	uint cmpeqwl:1;   /* Kl/Kw cmp eq/ne? */
+	uint cmplgtewl:1; /* Kl/Kw cmp lt/gt/le/ge? */
+	uint eqval:1;     /* 1 for eq; 0 for ne */
+	uint pinned:1;    /* GCM pinned op? */
 };
 
 struct Ins {
-  uint op : 30;
-  uint cls : 2;
-  Ref to;
-  Ref arg[2];
+	uint op:30;
+	uint cls:2;
+	Ref to;
+	Ref arg[2];
 };
 
 struct Phi {
-  Ref to;
-  Ref *arg;
-  Blk **blk;
-  uint narg;
-  short cls;
-  uint visit : 1;
-  Phi *link;
+	Ref to;
+	Ref *arg;
+	Blk **blk;
+	uint narg;
+	short cls;
+	uint visit:1;
+	Phi *link;
 };
 
 struct Blk {
-  Phi *phi;
-  Ins *ins;
-  uint nins;
-  struct {
-    short type;
-    Ref arg;
-  } jmp;
-  Blk *s1;
-  Blk *s2;
-  Blk *link;
+	Phi *phi;
+	Ins *ins;
+	uint nins;
+	struct {
+		short type;
+		Ref arg;
+	} jmp;
+	Blk *s1;
+	Blk *s2;
+	Blk *link;
 
-  uint id;
-  uint visit;
+	uint id;
+	uint visit;
 
-  Blk *idom;
-  Blk *dom, *dlink;
-  Blk **fron;
-  uint nfron;
-  int depth;
+	Blk *idom;
+	Blk *dom, *dlink;
+	Blk **fron;
+	uint nfron;
+	int depth;
 
-  Blk **pred;
-  uint npred;
-  BSet in[1], out[1], gen[1];
-  int nlive[2];
-  int loop;
-  char name[NString];
+	Blk **pred;
+	uint npred;
+	BSet in[1], out[1], gen[1];
+	int nlive[2];
+	int loop;
+	char name[NString];
 };
 
 struct Use {
-  enum {
-    UXXX,
-    UPhi,
-    UIns,
-    UJmp,
-  } type;
-  uint bid;
-  union {
-    Ins *ins;
-    Phi *phi;
-  } u;
+	enum {
+		UXXX,
+		UPhi,
+		UIns,
+		UJmp,
+	} type;
+	uint bid;
+	union {
+		Ins *ins;
+		Phi *phi;
+	} u;
 };
 
 struct Sym {
-  enum {
-    SGlo,
-    SThr,
-  } type;
-  uint32_t id;
+	enum {
+		SGlo,
+		SThr,
+	} type;
+	uint32_t id;
 };
 
 struct Num {
-  uchar n;
-  uchar nl, nr;
-  Ref l, r;
+	uchar n;
+	uchar nl, nr;
+	Ref l, r;
 };
 
-enum { NoAlias, MayAlias, MustAlias };
+enum {
+	NoAlias,
+	MayAlias,
+	MustAlias
+};
 
 struct Alias {
-  enum {
-    ABot = 0,
-    ALoc = 1, /* stack local */
-    ACon = 2,
-    AEsc = 3, /* stack escaping */
-    ASym = 4,
-    AUnk = 6,
-#define astack(t) ((t) & 1)
-  } type;
-  int base;
-  int64_t offset;
-  union {
-    Sym sym;
-    struct {
-      int sz; /* -1 if > NBit */
-      bits m;
-    } loc;
-  } u;
-  Alias *slot;
+	enum {
+		ABot = 0,
+		ALoc = 1, /* stack local */
+		ACon = 2,
+		AEsc = 3, /* stack escaping */
+		ASym = 4,
+		AUnk = 6,
+	#define astack(t) ((t) & 1)
+	} type;
+	int base;
+	int64_t offset;
+	union {
+		Sym sym;
+		struct {
+			int sz; /* -1 if > NBit */
+			bits m;
+		} loc;
+	} u;
+	Alias *slot;
 };
 
 struct Tmp {
-  char name[NString];
-  Ins *def;
-  Use *use;
-  uint ndef, nuse;
-  uint bid; /* id of a defining block */
-  uint cost;
-  int slot; /* -1 for unset */
-  short cls;
-  struct {
-    int r;  /* register or -1 */
-    int w;  /* weight */
-    bits m; /* avoid these registers */
-  } hint;
-  int phi;
-  Alias alias;
-  enum {
-    WFull,
-    Wsb, /* must match Oload/Oext order */
-    Wub,
-    Wsh,
-    Wuh,
-    Wsw,
-    Wuw
-  } width;
-  int visit;
-  uint gcmbid;
+	char name[NString];
+	Ins *def;
+	Use *use;
+	uint ndef, nuse;
+	uint bid; /* id of a defining block */
+	uint cost;
+	int slot; /* -1 for unset */
+	short cls;
+	struct {
+		int r;  /* register or -1 */
+		int w;  /* weight */
+		bits m; /* avoid these registers */
+	} hint;
+	int phi;
+	Alias alias;
+	enum {
+		WFull,
+		Wsb, /* must match Oload/Oext order */
+		Wub,
+		Wsh,
+		Wuh,
+		Wsw,
+		Wuw
+	} width;
+	int visit;
+	uint gcmbid;
 };
 
 struct Con {
-  enum {
-    CUndef,
-    CBits,
-    CAddr,
-  } type;
-  Sym sym;
-  union {
-    int64_t i;
-    double d;
-    float s;
-  } bits;
-  char flt; /* 1 to print as s, 2 to print as d */
+	enum {
+		CUndef,
+		CBits,
+		CAddr,
+	} type;
+	Sym sym;
+	union {
+		int64_t i;
+		double d;
+		float s;
+	} bits;
+	char flt; /* 1 to print as s, 2 to print as d */
 };
 
 typedef struct Addr Addr;
 
 struct Addr { /* amd64 addressing */
-  Con offset;
-  Ref base;
-  Ref index;
-  int scale;
+	Con offset;
+	Ref base;
+	Ref index;
+	int scale;
 };
 
 struct Lnk {
-  char export;
-  char thread;
-  char common;
-  char align;
-  char *sec;
-  char *secf;
+	char export;
+	char thread;
+	char common;
+	char align;
+	char *sec;
+	char *secf;
 };
 
 struct Fn {
-  Blk *start;
-  Tmp *tmp;
-  Con *con;
-  Mem *mem;
-  int ntmp;
-  int ncon;
-  int nmem;
-  uint nblk;
-  int retty; /* index in typ[], -1 if no aggregate return */
-  Ref retr;
-  Blk **rpo;
-  bits reg;
-  int slot;
-  int salign;
-  char vararg;
-  char dynalloc;
-  char leaf;
-  char name[NString];
-  Lnk lnk;
+	Blk *start;
+	Tmp *tmp;
+	Con *con;
+	Mem *mem;
+	int ntmp;
+	int ncon;
+	int nmem;
+	uint nblk;
+	int retty; /* index in typ[], -1 if no aggregate return */
+	Ref retr;
+	Blk **rpo;
+	bits reg;
+	int slot;
+	int salign;
+	char vararg;
+	char dynalloc;
+	char leaf;
+	char name[NString];
+	Lnk lnk;
 };
 
 struct Typ {
-  char name[NString];
-  char isdark;
-  char isunion;
-  int align;
-  uint64_t size;
-  uint nunion;
-  struct Field {
-    enum {
-      FEnd,
-      Fb,
-      Fh,
-      Fw,
-      Fl,
-      Fs,
-      Fd,
-      FPad,
-      FTyp,
-    } type;
-    uint len; /* or index in typ[] for FTyp */
-  } (*fields)[NField + 1];
+	char name[NString];
+	char isdark;
+	char isunion;
+	int align;
+	uint64_t size;
+	uint nunion;
+	struct Field {
+		enum {
+			FEnd,
+			Fb,
+			Fh,
+			Fw,
+			Fl,
+			Fs,
+			Fd,
+			FPad,
+			FTyp,
+		} type;
+		uint len; /* or index in typ[] for FTyp */
+	} (*fields)[NField+1];
 };
 
 struct Dat {
-  enum { DStart, DEnd, DB, DH, DW, DL, DZ } type;
-  char *name;
-  Lnk *lnk;
-  union {
-    int64_t num;
-    double fltd;
-    float flts;
-    char *str;
-    struct {
-      char *name;
-      int64_t off;
-    } ref;
-  } u;
-  char isref;
-  char isstr;
+	enum {
+		DStart,
+		DEnd,
+		DB,
+		DH,
+		DW,
+		DL,
+		DZ
+	} type;
+	char *name;
+	Lnk *lnk;
+	union {
+		int64_t num;
+		double fltd;
+		float flts;
+		char *str;
+		struct {
+			char *name;
+			int64_t off;
+		} ref;
+	} u;
+	char isref;
+	char isstr;
 };
 
 /* main.c */
 extern Target T;
-extern char debug['Z' + 1];
+extern char debug['Z'+1];
 
 /* util.c */
 typedef enum {
-  PHeap, /* free() necessary */
-  PFn,   /* discarded after processing the function */
+	PHeap, /* free() necessary */
+	PFn, /* discarded after processing the function */
 } Pool;
 
 extern Typ *typ;
@@ -515,14 +523,16 @@ void bsdiff(BSet *, BSet *);
 int bsequal(BSet *, BSet *);
 int bsiter(BSet *, int *);
 
-static inline int bshas(BSet *bs, uint elt) {
-  assert(elt < bs->nt * NBit);
-  return (bs->t[elt / NBit] & BIT(elt % NBit)) != 0;
+static inline int
+bshas(BSet *bs, uint elt)
+{
+	assert(elt < bs->nt * NBit);
+	return (bs->t[elt/NBit] & BIT(elt%NBit)) != 0;
 }
 
 /* parse.c */
 extern Op optab[NOp];
-void parse(FILE *, char *, void(char *), void(Dat *), void(Fn *));
+void parse(FILE *, char *, void (char *), void (Dat *), void (Fn *));
 void printfn(Fn *, FILE *);
 void printref(Ref, Fn *, FILE *);
 void err(char *, ...) __attribute__((noreturn));
@@ -577,7 +587,7 @@ int foldint(Con *, int, int, Con *, Con *);
 Ref foldref(Fn *, Ins *);
 
 /* gvn.c */
-extern Ref con01[2]; /* 0 and 1 */
+extern Ref con01[2];  /* 0 and 1 */
 int zeroval(Fn *, Blk *, Ref, int, int *);
 void gvn(Fn *);
 
