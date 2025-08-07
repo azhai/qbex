@@ -33,23 +33,23 @@ config.h:
 	*Darwin*)                                      \
 		case `uname -m` in                     \
 		*arm64*)                               \
-			echo "#define Deftgt T_arm64_apple";\
+			echo "#define Deftgt T_arm64_apple\n";\
 			;;                             \
 		*)                                     \
-			echo "#define Deftgt T_amd64_apple";\
+			echo "#define Deftgt T_amd64_apple\n";\
 			;;                             \
 		esac                                   \
 		;;                                     \
 	*)                                             \
 		case `uname -m` in                     \
 		*aarch64*|*arm64*)                     \
-			echo "#define Deftgt T_arm64"; \
+			echo "#define Deftgt T_arm64\n"; \
 			;;                             \
 		*riscv64*)                             \
-			echo "#define Deftgt T_rv64";  \
+			echo "#define Deftgt T_rv64\n";  \
 			;;                             \
 		*)                                     \
-			echo "#define Deftgt T_amd64_sysv";\
+			echo "#define Deftgt T_amd64_sysv\n";\
 			;;                             \
 		esac                                   \
 		;;                                     \
@@ -95,5 +95,8 @@ src:
 
 wc:
 	@wc -l $(SRCALL)
+
+format:
+	@clang-format -i -style=google $(SRCALL)
 
 .PHONY: clean clean-gen check check-arm64 check-rv64 src 80 wc install uninstall
