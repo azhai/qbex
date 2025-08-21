@@ -379,6 +379,8 @@ static void emitins(Ins *i, E *e) {
         if (Oadd <= omap[o].op && omap[o].op <= Oshl) strcat(fmt, APPLE_TAIL);
         if (Oloadsb <= omap[o].op && omap[o].op <= Oload)
           strcat(fmt, APPLE_TAIL);
+        if (Oextsb <= omap[o].op && omap[o].op <= Oexts)
+          strcat(fmt, APPLE_TAIL);
       }
       emitf(fmt, i, e);
       break;
